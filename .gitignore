@@ -1,0 +1,16 @@
+# OS X
+.DS_Store
+
+# Xcode / Build Artifacts
+build/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+.build/
+
+# Swift Package Manager
+.swiftpm/
+.concurrency/
+
+# Tools
+.codex/
