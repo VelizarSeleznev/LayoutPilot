@@ -613,6 +613,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     public func checkBilingualConversion(for token: String) -> BilingualResult? {
+        guard token.count >= 3 else { return nil }
         guard !token.isEmpty else { return nil }
         guard let sourceID = currentInputSourceID() else { return nil }
         
@@ -628,7 +629,10 @@ public final class SmartInputService: @unchecked Sendable {
             }
             
             let translated = translateEnglishToRussian(token)
-            if isValidRussianWord(translated) || hasGuesses(for: translated, language: "ru") {
+            let isWord = isValidRussianWord(translated)
+            let isLikelyWord = token.count >= 4 && hasGuesses(for: translated, language: "ru")
+            
+            if isWord || isLikelyWord {
                 let (_, russianLayoutID) = findLayouts()
                 return BilingualResult(replacement: translated, targetLayoutID: russianLayoutID)
             }
@@ -638,7 +642,10 @@ public final class SmartInputService: @unchecked Sendable {
             }
             
             let translated = translateRussianToEnglish(token)
-            if isValidEnglishWord(translated) || hasGuesses(for: translated, language: "en") {
+            let isWord = isValidEnglishWord(translated)
+            let isLikelyWord = token.count >= 4 && hasGuesses(for: translated, language: "en")
+            
+            if isWord || isLikelyWord {
                 let (englishLayoutID, _) = findLayouts()
                 return BilingualResult(replacement: translated, targetLayoutID: englishLayoutID)
             }

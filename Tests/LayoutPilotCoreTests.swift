@@ -36,6 +36,11 @@ final class LayoutPilotCoreTests: XCTestCase {
     func testBilingualConversion() {
         let service = SmartInputService.shared
         
+        // Assert that short words/abbreviations of length < 3 never trigger bilingual conversion
+        XCTAssertNil(service.checkBilingualConversion(for: "дс"))
+        XCTAssertNil(service.checkBilingualConversion(for: "lc"))
+        XCTAssertNil(service.checkBilingualConversion(for: "a"))
+        
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let rawID = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
             return
