@@ -159,6 +159,12 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setSmartBilingualUndoDelay(_ value: Double) {
+        var updated = configuration
+        updated.smartBilingualUndoDelay = value
+        configuration = updated
+    }
+
     public func setLLMEnabled(_ value: Bool) {
         var updated = configuration
         updated.llm.isEnabled = value

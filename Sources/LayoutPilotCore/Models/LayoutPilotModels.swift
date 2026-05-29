@@ -107,6 +107,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var smartDanishInputAllowedBundleIDs: [String]
     public var smartBilingualEnabled: Bool
     public var smartBilingualAllowedBundleIDs: [String]
+    public var smartBilingualUndoDelay: Double
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
     public var llm: LLMConfiguration
@@ -119,6 +120,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         smartDanishInputAllowedBundleIDs: [String] = [],
         smartBilingualEnabled: Bool = true,
         smartBilingualAllowedBundleIDs: [String] = [],
+        smartBilingualUndoDelay: Double = 0.5,
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule],
         llm: LLMConfiguration = .init()
@@ -130,6 +132,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartDanishInputAllowedBundleIDs = smartDanishInputAllowedBundleIDs
         self.smartBilingualEnabled = smartBilingualEnabled
         self.smartBilingualAllowedBundleIDs = smartBilingualAllowedBundleIDs
+        self.smartBilingualUndoDelay = smartBilingualUndoDelay
         self.profiles = profiles
         self.rules = rules
         self.llm = llm
@@ -143,6 +146,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case smartDanishInputAllowedBundleIDs
         case smartBilingualEnabled
         case smartBilingualAllowedBundleIDs
+        case smartBilingualUndoDelay
         case profiles
         case rules
         case llm
@@ -157,6 +161,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartDanishInputAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartDanishInputAllowedBundleIDs) ?? []
         self.smartBilingualEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualEnabled) ?? true
         self.smartBilingualAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartBilingualAllowedBundleIDs) ?? self.smartDanishInputAllowedBundleIDs
+        self.smartBilingualUndoDelay = try container.decodeIfPresent(Double.self, forKey: .smartBilingualUndoDelay) ?? 0.5
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
         self.llm = try container.decodeIfPresent(LLMConfiguration.self, forKey: .llm) ?? .init()
@@ -206,6 +211,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
             smartDanishInputAllowedBundleIDs: defaultApps,
             smartBilingualEnabled: true,
             smartBilingualAllowedBundleIDs: defaultApps,
+            smartBilingualUndoDelay: 0.5,
             profiles: [us, russian],
             rules: [
                 ApplicationLayoutRule(

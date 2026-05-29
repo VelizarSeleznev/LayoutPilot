@@ -17,6 +17,7 @@ final class LayoutPilotAppState {
             
             SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
             SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
+            SmartInputService.shared.smartBilingualUndoDelay = store.configuration.smartBilingualUndoDelay
             
             // Sync translation settings
             SmartInputService.shared.translationEnabled = store.configuration.llm.translationEnabled ?? true
@@ -30,6 +31,7 @@ final class LayoutPilotAppState {
         
         SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
         SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
+        SmartInputService.shared.smartBilingualUndoDelay = store.configuration.smartBilingualUndoDelay
         
         // Sync translation settings on launch
         SmartInputService.shared.translationEnabled = store.configuration.llm.translationEnabled ?? true

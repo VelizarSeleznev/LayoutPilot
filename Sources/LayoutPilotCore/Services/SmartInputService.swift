@@ -146,6 +146,30 @@ public final class SmartInputService: @unchecked Sendable {
             _smartBilingualAllowedBundleIDs = newValue
         }
     }
+
+    private var _smartBilingualUndoDelay = 0.5
+
+    public var smartBilingualUndoDelay: Double {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _smartBilingualUndoDelay
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _smartBilingualUndoDelay = newValue
+        }
+    }
+
+    private struct LastReplacementInfo {
+        let original: String
+        let replacement: String
+        let boundary: String
+        let timestamp: Date
+        let originalLayoutID: String?
+        var isActive: Bool
+    }
+
+    private var lastReplacement: LastReplacementInfo?
     
     private var eventTap: CFMachPort?
     private var isStarted = false
@@ -224,6 +248,21 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if keyCode == 51 { // Backspace / Delete
+            if let last = lastReplacement, last.isActive {
+                let elapsed = Date().timeIntervalSince(last.timestamp)
+                if elapsed <= _smartBilingualUndoDelay {
+                    performBilingualUndo(last)
+                    return nil // Swallow event!
+                } else {
+                    lastReplacement?.isActive = false
+                }
+            }
+        } else {
+            lastReplacement?.isActive = false
+        }
+
         // Intercept global translation shortcuts
         if translationEnabled {
             let flags = event.flags
@@ -281,7 +320,18 @@ public final class SmartInputService: @unchecked Sendable {
             if smartBilingualEnabled,
                isBilingualAllowed,
                let bilingualResult = checkBilingualConversion(for: buffer.token) {
+                let originalLayoutID = currentInputSourceID()
+                let originalToken = buffer.token
+                
                 replaceToken(with: bilingualResult.replacement, boundary: text)
+                
+                recordReplacementForUndo(
+                    original: originalToken,
+                    replacement: bilingualResult.replacement,
+                    boundary: text,
+                    originalLayoutID: originalLayoutID
+                )
+                
                 if let targetLayoutID = bilingualResult.targetLayoutID {
                     DispatchQueue.main.async {
                         try? SystemInputSourceClient().activateInputSource(withID: targetLayoutID)
@@ -652,5 +702,36 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         return nil
+    }
+
+    private func recordReplacementForUndo(original: String, replacement: String, boundary: String, originalLayoutID: String?) {
+        lastReplacement = LastReplacementInfo(
+            original: original,
+            replacement: replacement,
+            boundary: boundary,
+            timestamp: Date(),
+            originalLayoutID: originalLayoutID,
+            isActive: true
+        )
+    }
+
+    private func performBilingualUndo(_ last: LastReplacementInfo) {
+        lastReplacement?.isActive = false
+        
+        let charsToDeleteCount = last.replacement.count + last.boundary.count
+        for _ in 0..<charsToDeleteCount {
+            postKey(51) // Post Backspace
+        }
+        
+        postText(last.original)
+        
+        if let originalLayoutID = last.originalLayoutID {
+            DispatchQueue.main.async {
+                try? SystemInputSourceClient().activateInputSource(withID: originalLayoutID)
+            }
+        }
+        
+        buffer.reset()
+        buffer.append(last.original)
     }
 }
