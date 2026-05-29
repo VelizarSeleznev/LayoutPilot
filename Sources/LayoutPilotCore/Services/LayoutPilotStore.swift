@@ -33,7 +33,17 @@ public final class LayoutPilotStore {
     }
 
     public func rule(for bundleID: String) -> ApplicationLayoutRule? {
-        configuration.rules.first { $0.isEnabled && $0.applicationBundleID == bundleID }
+        configuration.rules.first { rule in
+            guard rule.isEnabled else { return false }
+            if rule.applicationBundleID == bundleID { return true }
+            // Support matching Wine/CrossOver dynamic bundle IDs or sub-apps
+            if bundleID.hasPrefix(rule.applicationBundleID) || 
+               (rule.applicationBundleID.lowercased() == "crossover" && bundleID.localizedCaseInsensitiveContains("crossover")) ||
+               (rule.applicationBundleID.lowercased() == "wine" && bundleID.localizedCaseInsensitiveContains("wine")) {
+                return true
+            }
+            return false
+        }
     }
 
     public func profile(for id: UUID) -> InputLayoutProfile? {
