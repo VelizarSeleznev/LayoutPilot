@@ -105,6 +105,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var showMenuBarItem: Bool
     public var smartDanishInputEnabled: Bool
     public var smartDanishInputAllowedBundleIDs: [String]
+    public var smartBilingualEnabled: Bool
+    public var smartBilingualAllowedBundleIDs: [String]
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
     public var llm: LLMConfiguration
@@ -115,6 +117,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         showMenuBarItem: Bool = true,
         smartDanishInputEnabled: Bool = true,
         smartDanishInputAllowedBundleIDs: [String] = [],
+        smartBilingualEnabled: Bool = true,
+        smartBilingualAllowedBundleIDs: [String] = [],
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule],
         llm: LLMConfiguration = .init()
@@ -124,9 +128,38 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.showMenuBarItem = showMenuBarItem
         self.smartDanishInputEnabled = smartDanishInputEnabled
         self.smartDanishInputAllowedBundleIDs = smartDanishInputAllowedBundleIDs
+        self.smartBilingualEnabled = smartBilingualEnabled
+        self.smartBilingualAllowedBundleIDs = smartBilingualAllowedBundleIDs
         self.profiles = profiles
         self.rules = rules
         self.llm = llm
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case automationEnabled
+        case launchAtLogin
+        case showMenuBarItem
+        case smartDanishInputEnabled
+        case smartDanishInputAllowedBundleIDs
+        case smartBilingualEnabled
+        case smartBilingualAllowedBundleIDs
+        case profiles
+        case rules
+        case llm
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.automationEnabled = try container.decodeIfPresent(Bool.self, forKey: .automationEnabled) ?? true
+        self.launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        self.showMenuBarItem = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarItem) ?? true
+        self.smartDanishInputEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartDanishInputEnabled) ?? true
+        self.smartDanishInputAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartDanishInputAllowedBundleIDs) ?? []
+        self.smartBilingualEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualEnabled) ?? true
+        self.smartBilingualAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartBilingualAllowedBundleIDs) ?? self.smartDanishInputAllowedBundleIDs
+        self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
+        self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
+        self.llm = try container.decodeIfPresent(LLMConfiguration.self, forKey: .llm) ?? .init()
     }
 
     public static func `default`() -> LayoutPilotConfiguration {
@@ -141,34 +174,38 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
             notes: "Default Russian layout for typing in Russian."
         )
 
+        let defaultApps = [
+            "com.apple.Safari",
+            "com.apple.Notes",
+            "com.apple.TextEdit",
+            "com.apple.mail",
+            "com.apple.MobileSMS",
+            "com.google.Chrome",
+            "com.microsoft.edgemac",
+            "com.microsoft.Word",
+            "org.mozilla.firefox",
+            "company.thebrowser.Browser",
+            "com.brave.Browser",
+            "com.raycast.macos",
+            "com.tinyspeck.slackmacgap",
+            "com.hnc.Discord",
+            "ru.keepcoder.Telegram",
+            "notion.id",
+            "md.obsidian",
+            "com.microsoft.VSCode",
+            "com.todesktop.230313mzl4w4u92",
+            "com.sublimetext.4",
+            "com.barebones.bbedit"
+        ]
+
         return LayoutPilotConfiguration(
             automationEnabled: true,
             launchAtLogin: false,
             showMenuBarItem: true,
             smartDanishInputEnabled: true,
-            smartDanishInputAllowedBundleIDs: [
-                "com.apple.Safari",
-                "com.apple.Notes",
-                "com.apple.TextEdit",
-                "com.apple.mail",
-                "com.apple.MobileSMS",
-                "com.google.Chrome",
-                "com.microsoft.edgemac",
-                "com.microsoft.Word",
-                "org.mozilla.firefox",
-                "company.thebrowser.Browser",
-                "com.brave.Browser",
-                "com.raycast.macos",
-                "com.tinyspeck.slackmacgap",
-                "com.hnc.Discord",
-                "ru.keepcoder.Telegram",
-                "notion.id",
-                "md.obsidian",
-                "com.microsoft.VSCode",
-                "com.todesktop.230313mzl4w4u92",
-                "com.sublimetext.4",
-                "com.barebones.bbedit"
-            ],
+            smartDanishInputAllowedBundleIDs: defaultApps,
+            smartBilingualEnabled: true,
+            smartBilingualAllowedBundleIDs: defaultApps,
             profiles: [us, russian],
             rules: [
                 ApplicationLayoutRule(

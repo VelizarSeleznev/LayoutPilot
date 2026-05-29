@@ -22,6 +22,11 @@ struct SettingsView: View {
                     set: { appState.store.setSmartDanishInputEnabled($0) }
                 ))
 
+                Toggle("Smart RU/EN Input", isOn: Binding(
+                    get: { appState.store.configuration.smartBilingualEnabled },
+                    set: { appState.store.setSmartBilingualEnabled($0) }
+                ))
+
                 Toggle("Launch at login", isOn: Binding(
                     get: { appState.store.configuration.launchAtLogin },
                     set: { appState.store.setLaunchAtLogin($0) }

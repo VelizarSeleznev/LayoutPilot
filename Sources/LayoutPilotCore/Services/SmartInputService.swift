@@ -121,6 +121,31 @@ public final class SmartInputService: @unchecked Sendable {
             _translationLanguages = newValue
         }
     }
+
+    private var _smartBilingualEnabled = true
+    private var _smartBilingualAllowedBundleIDs = Set<String>()
+
+    public var smartBilingualEnabled: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _smartBilingualEnabled
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _smartBilingualEnabled = newValue
+        }
+    }
+
+    public var smartBilingualAllowedBundleIDs: Set<String> {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _smartBilingualAllowedBundleIDs
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _smartBilingualAllowedBundleIDs = newValue
+        }
+    }
     
     private var eventTap: CFMachPort?
     private var isStarted = false
@@ -241,17 +266,44 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         if isBoundary(text) {
-            if let replacement = replacementForCurrentToken() {
+            let activeBundleID = frontmostBundleID() ?? ""
+            let isDanishAllowed = allowedBundleIDs.contains(activeBundleID)
+            let isBilingualAllowed = smartBilingualAllowedBundleIDs.contains(activeBundleID)
+            
+            if isDanishAllowed,
+               let sourceID = currentInputSourceID(),
+               usInputSources.contains(sourceID),
+               let replacement = replacementForCurrentToken() {
                 replaceToken(with: replacement, boundary: text)
                 return nil
             }
+            
+            if smartBilingualEnabled,
+               isBilingualAllowed,
+               let bilingualResult = checkBilingualConversion(for: buffer.token) {
+                replaceToken(with: bilingualResult.replacement, boundary: text)
+                if let targetLayoutID = bilingualResult.targetLayoutID {
+                    DispatchQueue.main.async {
+                        try? SystemInputSourceClient().activateInputSource(withID: targetLayoutID)
+                    }
+                }
+                return nil
+            }
+            
             buffer.reset()
             return Unmanaged.passUnretained(event)
         }
         
         if let character = text.first, isWordCharacter(character) {
             buffer.append(text)
-            if (triggerMap.keys.contains(character) || startsWithTrigger(buffer.token)),
+            
+            let activeBundleID = frontmostBundleID() ?? ""
+            let isDanishAllowed = allowedBundleIDs.contains(activeBundleID)
+            
+            if isDanishAllowed,
+               let sourceID = currentInputSourceID(),
+               usInputSources.contains(sourceID),
+               (triggerMap.keys.contains(character) || startsWithTrigger(buffer.token)),
                let replacement = replacementForCurrentToken() {
                 replacePendingToken(with: replacement)
                 return nil
@@ -286,16 +338,27 @@ public final class SmartInputService: @unchecked Sendable {
     }
     
     private func shouldHandleCurrentContext() -> Bool {
-        guard let sourceID = currentInputSourceID(), usInputSources.contains(sourceID) else {
+        guard let sourceID = currentInputSourceID() else {
             return false
         }
+        
+        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") || 
+                        sourceID.hasSuffix(".ru") || 
+                        sourceID.contains(".ru.") || 
+                        sourceID == "ru"
+        let isUS = usInputSources.contains(sourceID)
+        
+        guard isUS || isRussian else {
+            return false
+        }
+        
         guard let bundleID = frontmostBundleID() else {
             return false
         }
         if excludedBundleIDs.contains(bundleID) {
             return false
         }
-        return allowedBundleIDs.contains(bundleID)
+        return allowedBundleIDs.contains(bundleID) || smartBilingualAllowedBundleIDs.contains(bundleID)
     }
     
     private func eventText(_ event: CGEvent) -> String? {
@@ -467,5 +530,120 @@ public final class SmartInputService: @unchecked Sendable {
         }
         postText(replacement)
         buffer.reset()
+    }
+
+    private static let qwertyToYuken: [Character: Character] = [
+        "q": "й", "w": "ц", "e": "у", "r": "к", "t": "е", "y": "н", "u": "г", "i": "ш", "o": "щ", "p": "з", "[": "х", "]": "ъ",
+        "a": "ф", "s": "ы", "d": "в", "f": "а", "g": "п", "h": "р", "j": "о", "k": "л", "l": "д", ";": "ж", "'": "э",
+        "z": "я", "x": "ч", "c": "с", "v": "м", "b": "и", "n": "т", "m": "ь", ",": "б", ".": "ю", "/": ".",
+        "Q": "Й", "W": "Ц", "E": "У", "R": "К", "T": "Е", "Y": "Н", "U": "Г", "I": "Ш", "O": "Щ", "P": "З", "{": "Х", "}": "Ъ",
+        "A": "Ф", "S": "Ы", "D": "В", "F": "А", "G": "П", "H": "Р", "J": "О", "K": "Л", "L": "Д", ":": "Ж", "\"": "Э",
+        "Z": "Я", "X": "Ч", "C": "С", "V": "М", "B": "И", "N": "Т", "M": "Ь", "<": "Б", ">": "Ю", "?": ",",
+        "`": "ё", "~": "Ё",
+    ]
+
+    private static let yukenToQwerty: [Character: Character] = {
+        var map = [Character: Character]()
+        for (k, v) in qwertyToYuken {
+            map[v] = k
+        }
+        return map
+    }()
+
+    private func translateEnglishToRussian(_ token: String) -> String {
+        return String(token.map { Self.qwertyToYuken[$0] ?? $0 })
+    }
+
+    private func translateRussianToEnglish(_ token: String) -> String {
+        return String(token.map { Self.yukenToQwerty[$0] ?? $0 })
+    }
+
+    private func findLayouts() -> (english: String?, russian: String?) {
+        let client = SystemInputSourceClient()
+        let sources = client.availableInputSources()
+        
+        let english = sources.first { source in
+            let id = source.sourceID.lowercased()
+            return (id.contains(".us") || id.contains(".abc") || source.languageTag == "en") &&
+                   !id.contains("characterpalette") && !id.contains("ink")
+        }?.sourceID ?? "com.apple.keylayout.US"
+        
+        let russian = sources.first { source in
+            let id = source.sourceID.lowercased()
+            return (id.contains("russian") || source.languageTag == "ru") &&
+                   !id.contains("characterpalette") && !id.contains("ink")
+        }?.sourceID ?? "com.apple.keylayout.RussianWin"
+        
+        return (english, russian)
+    }
+
+    private func isValidEnglishWord(_ word: String) -> Bool {
+        let range = checker.checkSpelling(
+            of: word,
+            startingAt: 0,
+            language: "en",
+            wrap: false,
+            inSpellDocumentWithTag: 0,
+            wordCount: nil
+        )
+        return range.location == NSNotFound
+    }
+
+    private func isValidRussianWord(_ word: String) -> Bool {
+        let range = checker.checkSpelling(
+            of: word,
+            startingAt: 0,
+            language: "ru",
+            wrap: false,
+            inSpellDocumentWithTag: 0,
+            wordCount: nil
+        )
+        return range.location == NSNotFound
+    }
+
+    private func hasGuesses(for word: String, language: String) -> Bool {
+        let range = NSRange(location: 0, length: word.utf16.count)
+        let guesses = checker.guesses(forWordRange: range, in: word, language: language, inSpellDocumentWithTag: 0)
+        return guesses != nil && !guesses!.isEmpty
+    }
+
+    public struct BilingualResult {
+        public let replacement: String
+        public let targetLayoutID: String?
+    }
+
+    public func checkBilingualConversion(for token: String) -> BilingualResult? {
+        guard !token.isEmpty else { return nil }
+        guard let sourceID = currentInputSourceID() else { return nil }
+        
+        let isUS = usInputSources.contains(sourceID)
+        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") || 
+                        sourceID.hasSuffix(".ru") || 
+                        sourceID.contains(".ru.") || 
+                        sourceID == "ru"
+        
+        if isUS {
+            if isValidEnglishWord(token) {
+                return nil
+            }
+            
+            let translated = translateEnglishToRussian(token)
+            if isValidRussianWord(translated) || hasGuesses(for: translated, language: "ru") {
+                let (_, russianLayoutID) = findLayouts()
+                return BilingualResult(replacement: translated, targetLayoutID: russianLayoutID)
+            }
+        } else if isRussian {
+            if isValidRussianWord(token) {
+                return nil
+            }
+            
+            let translated = translateRussianToEnglish(token)
+            if isValidEnglishWord(translated) || hasGuesses(for: translated, language: "en") {
+                let (englishLayoutID, _) = findLayouts()
+                return BilingualResult(replacement: translated, targetLayoutID: englishLayoutID)
+            }
+        }
+        
+        return nil
     }
 }

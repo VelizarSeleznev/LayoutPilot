@@ -11,6 +11,8 @@ struct DiagnosticsView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         diagnosticsRow(title: "Engine running", value: appState.engine.isRunning ? "Yes" : "No")
                         diagnosticsRow(title: "Configuration file", value: configurationPath)
+                        diagnosticsRow(title: "Smart RU/EN Input", value: appState.store.configuration.smartBilingualEnabled ? "Yes" : "No")
+                        diagnosticsRow(title: "Smart Danish Input", value: appState.store.configuration.smartDanishInputEnabled ? "Yes" : "No")
                         diagnosticsRow(title: "Automation error", value: appState.engine.lastErrorMessage ?? "None")
                         diagnosticsRow(title: "Store error", value: appState.store.lastErrorMessage ?? "None")
                     }

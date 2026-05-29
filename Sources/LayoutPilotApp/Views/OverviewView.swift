@@ -42,28 +42,43 @@ struct OverviewView: View {
                 llmCockpitCard
 
                 // Quick Toggle Settings
-                HStack(spacing: 16) {
-                    toggleCard(
-                        title: "Smart Danish Input",
-                        description: "Use key combinations (;, ', [) to type Danish chars natively.",
-                        systemImage: "keyboard",
-                        accentColor: .orange,
-                        isOn: Binding(
-                            get: { appState.store.configuration.smartDanishInputEnabled },
-                            set: { appState.store.setSmartDanishInputEnabled($0) }
+                VStack(spacing: 16) {
+                    HStack(spacing: 16) {
+                        toggleCard(
+                            title: "Smart RU/EN Input",
+                            description: "Automatically switches layout and corrects text if typed in the wrong language.",
+                            systemImage: "globe",
+                            accentColor: .green,
+                            isOn: Binding(
+                                get: { appState.store.configuration.smartBilingualEnabled },
+                                set: { appState.store.setSmartBilingualEnabled($0) }
+                            )
                         )
-                    )
 
-                    toggleCard(
-                        title: "Menu Bar Icon",
-                        description: "Access quick controls and active app settings from the menu bar.",
-                        systemImage: "uiwindow.split.2x1",
-                        accentColor: .blue,
-                        isOn: Binding(
-                            get: { appState.store.configuration.showMenuBarItem },
-                            set: { appState.store.setShowMenuBarItem($0) }
+                        toggleCard(
+                            title: "Smart Danish Input",
+                            description: "Use key combinations (;, ', [) to type Danish chars natively.",
+                            systemImage: "keyboard",
+                            accentColor: .orange,
+                            isOn: Binding(
+                                get: { appState.store.configuration.smartDanishInputEnabled },
+                                set: { appState.store.setSmartDanishInputEnabled($0) }
+                            )
                         )
-                    )
+                    }
+                    
+                    HStack(spacing: 16) {
+                        toggleCard(
+                            title: "Menu Bar Icon",
+                            description: "Access quick controls and active app settings from the menu bar.",
+                            systemImage: "uiwindow.split.2x1",
+                            accentColor: .blue,
+                            isOn: Binding(
+                                get: { appState.store.configuration.showMenuBarItem },
+                                set: { appState.store.setShowMenuBarItem($0) }
+                            )
+                        )
+                    }
                 }
 
                 // Metric Grid Counters (2 Column Layout)

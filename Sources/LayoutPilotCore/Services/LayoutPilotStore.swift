@@ -130,6 +130,35 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setSmartBilingualEnabled(_ value: Bool) {
+        var updated = configuration
+        updated.smartBilingualEnabled = value
+        configuration = updated
+    }
+
+    public func setSmartBilingualAllowedBundleIDs(_ value: [String]) {
+        var updated = configuration
+        updated.smartBilingualAllowedBundleIDs = value.sorted()
+        configuration = updated
+    }
+
+    public func addSmartBilingualAllowedBundleID(_ bundleID: String) {
+        var updated = configuration
+        let trimmed = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if !updated.smartBilingualAllowedBundleIDs.contains(trimmed) {
+            updated.smartBilingualAllowedBundleIDs.append(trimmed)
+            updated.smartBilingualAllowedBundleIDs.sort()
+        }
+        configuration = updated
+    }
+
+    public func removeSmartBilingualAllowedBundleID(_ bundleID: String) {
+        var updated = configuration
+        updated.smartBilingualAllowedBundleIDs.removeAll { $0 == bundleID }
+        configuration = updated
+    }
+
     public func setLLMEnabled(_ value: Bool) {
         var updated = configuration
         updated.llm.isEnabled = value

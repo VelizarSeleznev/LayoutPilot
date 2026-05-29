@@ -1,3 +1,4 @@
+import Carbon
 import LayoutPilotCore
 import XCTest
 
@@ -30,5 +31,39 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(store.rule(for: "com.example.Test")?.applicationName, "Test")
         store.deleteRule(id: rule.id)
         XCTAssertNil(store.rule(for: "com.example.Test"))
+    }
+
+    func testBilingualConversion() {
+        let service = SmartInputService.shared
+        
+        guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let rawID = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
+            return
+        }
+        let sourceID = Unmanaged<CFString>.fromOpaque(rawID).takeUnretainedValue() as String
+        
+        let isUS = sourceID.contains("US") || sourceID.contains("ABC")
+        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") || 
+                        sourceID.hasSuffix(".ru") || 
+                        sourceID.contains(".ru.") || 
+                        sourceID == "ru"
+                        
+        if isUS {
+            // Under English layout, "hello" is valid English and should not trigger conversion
+            XCTAssertNil(service.checkBilingualConversion(for: "hello"))
+            
+            // "ghbdtn" is English layout for "привет", should trigger conversion to Russian
+            let privetResult = service.checkBilingualConversion(for: "ghbdtn")
+            XCTAssertNotNil(privetResult)
+            XCTAssertEqual(privetResult?.replacement, "привет")
+        } else if isRussian {
+            // Under Russian layout, "привет" is valid Russian and should not trigger conversion
+            XCTAssertNil(service.checkBilingualConversion(for: "привет"))
+            
+            // "цщкдв" is Russian layout for "world", should trigger conversion to English
+            let worldResult = service.checkBilingualConversion(for: "цщкдв")
+            XCTAssertNotNil(worldResult)
+            XCTAssertEqual(worldResult?.replacement, "world")
+        }
     }
 }

@@ -17,6 +17,10 @@ struct MenuBarView: View {
         appState.store.configuration.smartDanishInputAllowedBundleIDs.contains(activeBundleID)
     }
 
+    var isSmartBilingualEnabledForActiveApp: Bool {
+        appState.store.configuration.smartBilingualAllowedBundleIDs.contains(activeBundleID)
+    }
+
     var isAutoSwitchActive: Bool {
         activeAppRule()?.isEnabled ?? false
     }
@@ -57,7 +61,17 @@ struct MenuBarView: View {
                 Label("Auto-Switch Layout: \(currentProfileName)", systemImage: "arrow.triangle.2.circlepath.keyboard")
             }
             
-            // 2. Smart Danish Input checkmark toggle for Active App
+            // 2. Smart Russian/English Input checkmark toggle for Active App
+            Button {
+                toggleSmartBilingualForActiveApp()
+            } label: {
+                Label(
+                    isSmartBilingualEnabledForActiveApp ? "Smart RU/EN Input: ON" : "Smart RU/EN Input: OFF",
+                    systemImage: isSmartBilingualEnabledForActiveApp ? "checkmark.circle.fill" : "globe"
+                )
+            }
+            
+            // 3. Smart Danish Input checkmark toggle for Active App
             Button {
                 toggleSmartInputForActiveApp()
             } label: {
@@ -73,6 +87,11 @@ struct MenuBarView: View {
             Toggle("Global Auto-Switching", isOn: Binding(
                 get: { appState.store.configuration.automationEnabled },
                 set: { appState.store.setAutomationEnabled($0) }
+            ))
+
+            Toggle("Global Smart RU/EN Input", isOn: Binding(
+                get: { appState.store.configuration.smartBilingualEnabled },
+                set: { appState.store.setSmartBilingualEnabled($0) }
             ))
 
             Toggle("Global Smart Danish Input", isOn: Binding(
@@ -125,6 +144,15 @@ struct MenuBarView: View {
             appState.store.removeSmartDanishInputAllowedBundleID(activeBundleID)
         } else {
             appState.store.addSmartDanishInputAllowedBundleID(activeBundleID)
+        }
+        appState.engine.refreshNow()
+    }
+
+    private func toggleSmartBilingualForActiveApp() {
+        if isSmartBilingualEnabledForActiveApp {
+            appState.store.removeSmartBilingualAllowedBundleID(activeBundleID)
+        } else {
+            appState.store.addSmartBilingualAllowedBundleID(activeBundleID)
         }
         appState.engine.refreshNow()
     }

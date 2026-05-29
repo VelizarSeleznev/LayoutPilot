@@ -15,6 +15,9 @@ final class LayoutPilotAppState {
             SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
             SmartInputService.shared.allowedBundleIDs = Set(store.configuration.smartDanishInputAllowedBundleIDs)
             
+            SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
+            SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
+            
             // Sync translation settings
             SmartInputService.shared.translationEnabled = store.configuration.llm.translationEnabled ?? true
             SmartInputService.shared.translationEndpointURL = store.configuration.llm.endpointURL
@@ -24,6 +27,9 @@ final class LayoutPilotAppState {
         engine.start()
         SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
         SmartInputService.shared.allowedBundleIDs = Set(store.configuration.smartDanishInputAllowedBundleIDs)
+        
+        SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
+        SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
         
         // Sync translation settings on launch
         SmartInputService.shared.translationEnabled = store.configuration.llm.translationEnabled ?? true
