@@ -6,11 +6,13 @@ import Observation
 final class LayoutPilotAppState {
     let store: LayoutPilotStore
     let engine: LayoutAutomationEngine
+    var launchAtLoginState: LaunchAtLoginService.State
 
     init() {
         self.store = LayoutPilotStore()
         self.engine = LayoutAutomationEngine(store: store)
-        store.changeHandler = { [weak engine, store] in
+        self.launchAtLoginState = LaunchAtLoginService.currentState()
+        store.changeHandler = { [weak self, weak engine, store] in
             engine?.refreshNow()
             SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
             SmartInputService.shared.allowedBundleIDs = Set(store.configuration.smartDanishInputAllowedBundleIDs)
@@ -24,6 +26,9 @@ final class LayoutPilotAppState {
             SmartInputService.shared.translationEndpointURL = store.configuration.llm.endpointURL
             SmartInputService.shared.translationModel = store.configuration.llm.model
             SmartInputService.shared.translationLanguages = store.configuration.llm.translationLanguages ?? []
+            
+            // Sync launch at login
+            self?.launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
         }
         engine.start()
         SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
@@ -39,7 +44,14 @@ final class LayoutPilotAppState {
         SmartInputService.shared.translationModel = store.configuration.llm.model
         SmartInputService.shared.translationLanguages = store.configuration.llm.translationLanguages ?? []
         
+        // Sync launch at login on launch
+        launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
+        
         SmartInputService.shared.start()
     }
-}
 
+    func setLaunchAtLogin(_ isEnabled: Bool) {
+        launchAtLoginState = LaunchAtLoginService.sync(enabled: isEnabled)
+        store.setLaunchAtLogin(isEnabled)
+    }
+}

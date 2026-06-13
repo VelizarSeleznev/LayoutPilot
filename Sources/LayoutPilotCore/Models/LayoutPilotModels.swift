@@ -19,11 +19,17 @@ public struct InputLayoutProfile: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public enum ApplicationLayoutRuleTarget: String, Codable, Hashable, Sendable {
+    case profile
+    case lastUsed
+}
+
 public struct ApplicationLayoutRule: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var applicationBundleID: String
     public var applicationName: String
     public var profileID: UUID
+    public var target: ApplicationLayoutRuleTarget
     public var isEnabled: Bool
 
     public init(
@@ -31,13 +37,45 @@ public struct ApplicationLayoutRule: Identifiable, Codable, Hashable, Sendable {
         applicationBundleID: String,
         applicationName: String,
         profileID: UUID,
+        target: ApplicationLayoutRuleTarget = .profile,
         isEnabled: Bool = true
     ) {
         self.id = id
         self.applicationBundleID = applicationBundleID
         self.applicationName = applicationName
         self.profileID = profileID
+        self.target = target
         self.isEnabled = isEnabled
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case applicationBundleID
+        case applicationName
+        case profileID
+        case target
+        case isEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.applicationBundleID = try container.decode(String.self, forKey: .applicationBundleID)
+        self.applicationName = try container.decode(String.self, forKey: .applicationName)
+        self.profileID = try container.decode(UUID.self, forKey: .profileID)
+        self.target = try container.decodeIfPresent(ApplicationLayoutRuleTarget.self, forKey: .target) ?? .profile
+        self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+}
+
+public struct RecentApplicationContext: Identifiable, Hashable, Sendable {
+    public var id: String { bundleID }
+    public var applicationName: String
+    public var bundleID: String
+
+    public init(applicationName: String, bundleID: String) {
+        self.applicationName = applicationName
+        self.bundleID = bundleID
     }
 }
 
@@ -296,4 +334,3 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
         }
     }
 }
-

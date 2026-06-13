@@ -11,8 +11,11 @@ struct DiagnosticsView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         diagnosticsRow(title: "Engine running", value: appState.engine.isRunning ? "Yes" : "No")
                         diagnosticsRow(title: "Configuration file", value: configurationPath)
+                        diagnosticsRow(title: "Smart input event log", value: smartInputEventLogPath)
                         diagnosticsRow(title: "Smart RU/EN Input", value: appState.store.configuration.smartBilingualEnabled ? "Yes" : "No")
                         diagnosticsRow(title: "Smart Danish Input", value: appState.store.configuration.smartDanishInputEnabled ? "Yes" : "No")
+                        diagnosticsRow(title: "Launch at login", value: appState.launchAtLoginState.statusDescription)
+                        diagnosticsRow(title: "Launch at login error", value: appState.launchAtLoginState.errorMessage ?? "None")
                         diagnosticsRow(title: "Automation error", value: appState.engine.lastErrorMessage ?? "None")
                         diagnosticsRow(title: "Store error", value: appState.store.lastErrorMessage ?? "None")
                     }
@@ -47,6 +50,10 @@ struct DiagnosticsView: View {
         (try? LayoutPilotPaths.configurationURL().path) ?? "Unavailable"
     }
 
+    private var smartInputEventLogPath: String {
+        (try? LayoutPilotPaths.smartInputEventLogURL().path) ?? "Unavailable"
+    }
+
     private func diagnosticsRow(title: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(title)
@@ -58,4 +65,3 @@ struct DiagnosticsView: View {
         }
     }
 }
-

@@ -2,13 +2,17 @@ name: LayoutPilot
 options:
   bundleIdPrefix: com.velizard
   deploymentTarget:
-    macOS: "15.0"
+    macOS: "14.0"
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
     CODE_SIGN_IDENTITY: "Apple Development: velizar.seleznev@gmail.com (VMQ79QRJFB)"
     DEVELOPMENT_TEAM: "KML84LMMXZ"
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.4
 targets:
   LayoutPilotCore:
     type: framework
@@ -36,19 +40,24 @@ targets:
       - path: Sources/LayoutPilotApp
     dependencies:
       - target: LayoutPilotCore
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.velizard.LayoutPilot
         INFOPLIST_KEY_CFBundleDisplayName: LayoutPilot
         INFOPLIST_KEY_CFBundleName: LayoutPilot
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-        INFOPLIST_KEY_LSMinimumSystemVersion: "15.0"
+        INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
         INFOPLIST_KEY_NSHighResolutionCapable: true
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGNING_REQUIRED: YES
         VALIDATE_PRODUCT: NO
         SWIFTUI_PREVIEW_DEVICE: "Apple Mac"
+        SUFeedURL: "https://velizarseleznev.github.io/LayoutPilot/appcast.xml"
+        SUPublicEDKey: "kqP2g56I7yz/ruSxLBTKSFAKRhXefII0cwo9u1agIU8="
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: true
     info:
       path: Sources/LayoutPilotApp/Info.plist
       properties:
@@ -56,7 +65,7 @@ targets:
         CFBundleIdentifier: com.velizard.LayoutPilot
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
-        LSMinimumSystemVersion: "15.0"
+        LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
   LayoutPilotTests:
     type: bundle.unit-test

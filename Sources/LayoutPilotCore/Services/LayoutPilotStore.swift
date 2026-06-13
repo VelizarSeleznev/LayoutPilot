@@ -19,10 +19,13 @@ public final class LayoutPilotStore {
         var resolvedFileURL = URL(fileURLWithPath: "/dev/null")
         var resolvedConfiguration = LayoutPilotConfiguration.default()
         var initialErrorMessage: String?
+        var shouldPersistNormalizedConfiguration = false
 
         do {
             resolvedFileURL = try fileURL ?? LayoutPilotPaths.configurationURL()
-            resolvedConfiguration = try Self.loadConfiguration(from: resolvedFileURL)
+            let loadedConfiguration = try Self.loadConfiguration(from: resolvedFileURL)
+            resolvedConfiguration = Self.normalizedConfiguration(loadedConfiguration)
+            shouldPersistNormalizedConfiguration = loadedConfiguration != resolvedConfiguration
         } catch {
             initialErrorMessage = error.localizedDescription
         }
@@ -30,6 +33,10 @@ public final class LayoutPilotStore {
         self.fileURL = resolvedFileURL
         self.configuration = resolvedConfiguration
         self.lastErrorMessage = initialErrorMessage
+
+        if shouldPersistNormalizedConfiguration {
+            persistConfiguration()
+        }
     }
 
     public func rule(for bundleID: String) -> ApplicationLayoutRule? {
@@ -52,11 +59,16 @@ public final class LayoutPilotStore {
 
     public func upsertRule(_ rule: ApplicationLayoutRule) {
         var updated = configuration
-        if let index = updated.rules.firstIndex(where: { $0.id == rule.id }) {
-            updated.rules[index] = rule
+        if let index = updated.rules.firstIndex(where: { $0.id == rule.id || $0.applicationBundleID == rule.applicationBundleID }) {
+            let existingID = updated.rules[index].id
+            var replacement = rule
+            replacement.id = existingID
+            updated.rules.removeAll { $0.applicationBundleID == rule.applicationBundleID || $0.id == rule.id }
+            updated.rules.insert(replacement, at: min(index, updated.rules.count))
         } else {
             updated.rules.append(rule)
         }
+        updated.rules = Self.deduplicatedRules(updated.rules)
         configuration = updated
     }
 
@@ -220,5 +232,27 @@ public final class LayoutPilotStore {
         let data = try Data(contentsOf: fileURL)
         let decoder = JSONDecoder()
         return try decoder.decode(LayoutPilotConfiguration.self, from: data)
+    }
+
+    private static func normalizedConfiguration(_ configuration: LayoutPilotConfiguration) -> LayoutPilotConfiguration {
+        var configuration = configuration
+        configuration.rules = deduplicatedRules(configuration.rules)
+        return configuration
+    }
+
+    private static func deduplicatedRules(_ rules: [ApplicationLayoutRule]) -> [ApplicationLayoutRule] {
+        var result: [ApplicationLayoutRule] = []
+        var indexByBundleID: [String: Int] = [:]
+
+        for rule in rules {
+            if let index = indexByBundleID[rule.applicationBundleID] {
+                result[index] = rule
+            } else {
+                indexByBundleID[rule.applicationBundleID] = result.count
+                result.append(rule)
+            }
+        }
+
+        return result
     }
 }

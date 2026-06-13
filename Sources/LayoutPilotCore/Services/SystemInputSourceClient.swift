@@ -53,6 +53,13 @@ public final class SystemInputSourceClient: InputSourceClient {
         let array = unmanaged.takeRetainedValue() as NSArray
         return array.compactMap { element in
             let source = element as! TISInputSource
+            
+            // Only include actual keyboard input sources (layouts and input methods)
+            guard let category = Self.stringProperty(source, key: kTISPropertyInputSourceCategory),
+                  category == (kTISCategoryKeyboardInputSource as String) else {
+                return nil
+            }
+            
             guard let sourceID = Self.stringProperty(source, key: kTISPropertyInputSourceID),
                   let localizedName = Self.stringProperty(source, key: kTISPropertyLocalizedName) else {
                 return nil

@@ -20,6 +20,12 @@ Generate the Xcode project, then run:
 ./script/build_and_run.sh
 ```
 
+The run script builds with the configured development signature, copies the app to
+`/Applications/LayoutPilot.app`, verifies the copied bundle signature, and launches
+that installed app. Keeping the bundle at a stable `/Applications` path makes the
+macOS Login Items and Accessibility permission state more predictable during local
+development.
+
 ## Development & Code Signing
 
 Since LayoutPilot uses a low-level Event Tap via CoreGraphics (`CGEvent.tapCreate`) for key interception, macOS requires **Accessibility** permissions, which in turn require valid code signing.
@@ -35,4 +41,3 @@ The project configuration in `project.yml` is preset with the original developer
 - The app seeds example rules for Word, Notion, and Terminal.
 - The `LLM` settings block is a placeholder for later local model integration.
 - Persistent configuration lives in `~/Library/Application Support/LayoutPilot/configuration.json`.
-

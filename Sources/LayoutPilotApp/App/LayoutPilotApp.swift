@@ -18,6 +18,6 @@ struct LayoutPilotApp: App {
         MenuBarExtra("LayoutPilot", systemImage: "keyboard") {
             MenuBarView(appState: appState)
         }
+        .menuBarExtraStyle(.window)
     }
 }
-

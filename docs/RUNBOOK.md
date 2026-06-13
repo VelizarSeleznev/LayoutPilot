@@ -12,15 +12,33 @@
 - Build script: `script/build_and_run.sh`
 - Codex Run action: `.codex/environments/environment.toml`
 
-## Configuration
-
 Persistent state is stored at:
 
 `~/Library/Application Support/LayoutPilot/configuration.json`
+
+## Releasing Updates
+
+To publish a new update for LayoutPilot:
+
+1. Run the release automation script:
+   ```sh
+   ./script/release.py
+   ```
+2. Confirm the version number, build number, and enter release notes. The script will:
+   - Update `project.yml` with the new version.
+   - Run tests to ensure stability.
+   - Build a Release `LayoutPilot.dmg`.
+   - Sign the DMG with Sparkle's Ed25519 key.
+   - Prepend the new update item block in `docs/appcast.xml`.
+   - Commit and push changes to git.
+   - Create a GitHub Release and upload `LayoutPilot.dmg`.
+
+---
 
 ## Current scope
 
 - automatic input-source switching by frontmost bundle ID
 - UI for app rules and input profiles
 - placeholder LLM settings for future expansion
+
 

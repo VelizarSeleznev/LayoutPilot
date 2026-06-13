@@ -239,6 +239,25 @@ struct OverviewView: View {
                 
                 Spacer()
             }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Recent App Settings")
+                    .font(.subheadline.weight(.semibold))
+
+                if appState.engine.recentApplications.isEmpty {
+                    Text("Switch to an application to edit its quick settings here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(appState.engine.recentApplications) { application in
+                            recentApplicationSettingsRow(for: application)
+                        }
+                    }
+                }
+            }
         }
         .padding(18)
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
@@ -246,6 +265,59 @@ struct OverviewView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        )
+    }
+
+    private func recentApplicationSettingsRow(for application: RecentApplicationContext) -> some View {
+        HStack(spacing: 12) {
+            AppIconView(bundleID: application.bundleID, size: 32)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(application.applicationName)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                Text(application.bundleID)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(minWidth: 130, maxWidth: .infinity, alignment: .leading)
+
+            Picker("Auto-Switch", selection: Binding(
+                get: { autoSwitchSelection(for: application) },
+                set: { setAutoSwitchSelection($0, for: application) }
+            )) {
+                Text("None").tag("none")
+                Text("Last Used").tag("lastUsed")
+                Divider()
+                ForEach(appState.store.configuration.profiles) { profile in
+                    Text(profile.name).tag("profile:\(profile.id.uuidString)")
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 140)
+
+            Toggle("RU/EN", isOn: Binding(
+                get: { isSmartBilingualEnabled(for: application) },
+                set: { setSmartBilingualEnabled($0, for: application) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            Toggle("Danish", isOn: Binding(
+                get: { isSmartDanishEnabled(for: application) },
+                set: { setSmartDanishEnabled($0, for: application) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.35))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
     }
 
@@ -335,6 +407,92 @@ struct OverviewView: View {
             return sourceID.replacingOccurrences(of: "com.apple.keylayout.", with: "")
         }
         return sourceID
+    }
+
+    private func rule(for application: RecentApplicationContext) -> ApplicationLayoutRule? {
+        appState.store.configuration.rules.first { $0.applicationBundleID == application.bundleID }
+    }
+
+    private func autoSwitchSelection(for application: RecentApplicationContext) -> String {
+        guard let rule = rule(for: application), rule.isEnabled else {
+            return "none"
+        }
+
+        switch rule.target {
+        case .profile:
+            return "profile:\(rule.profileID.uuidString)"
+        case .lastUsed:
+            return "lastUsed"
+        }
+    }
+
+    private func setAutoSwitchSelection(_ selection: String, for application: RecentApplicationContext) {
+        if selection == "none" {
+            disableAutoSwitch(for: application)
+            return
+        }
+
+        let fallbackProfileID = rule(for: application)?.profileID ?? appState.store.configuration.profiles.first?.id ?? UUID()
+        let target: ApplicationLayoutRuleTarget
+        let profileID: UUID
+
+        if selection == "lastUsed" {
+            target = .lastUsed
+            profileID = fallbackProfileID
+        } else if selection.hasPrefix("profile:"),
+                  let selectedProfileID = UUID(uuidString: String(selection.dropFirst("profile:".count))) {
+            target = .profile
+            profileID = selectedProfileID
+        } else {
+            return
+        }
+
+        let rule = ApplicationLayoutRule(
+            applicationBundleID: application.bundleID,
+            applicationName: application.applicationName,
+            profileID: profileID,
+            target: target,
+            isEnabled: true
+        )
+        appState.store.upsertRule(rule)
+        appState.engine.refreshNow()
+    }
+
+    private func disableAutoSwitch(for application: RecentApplicationContext) {
+        guard let rule = rule(for: application) else {
+            return
+        }
+
+        var updated = rule
+        updated.isEnabled = false
+        appState.store.upsertRule(updated)
+        appState.engine.refreshNow()
+    }
+
+    private func isSmartBilingualEnabled(for application: RecentApplicationContext) -> Bool {
+        appState.store.configuration.smartBilingualAllowedBundleIDs.contains(application.bundleID)
+    }
+
+    private func setSmartBilingualEnabled(_ isEnabled: Bool, for application: RecentApplicationContext) {
+        if isEnabled {
+            appState.store.addSmartBilingualAllowedBundleID(application.bundleID)
+        } else {
+            appState.store.removeSmartBilingualAllowedBundleID(application.bundleID)
+        }
+        appState.engine.refreshNow()
+    }
+
+    private func isSmartDanishEnabled(for application: RecentApplicationContext) -> Bool {
+        appState.store.configuration.smartDanishInputAllowedBundleIDs.contains(application.bundleID)
+    }
+
+    private func setSmartDanishEnabled(_ isEnabled: Bool, for application: RecentApplicationContext) {
+        if isEnabled {
+            appState.store.addSmartDanishInputAllowedBundleID(application.bundleID)
+        } else {
+            appState.store.removeSmartDanishInputAllowedBundleID(application.bundleID)
+        }
+        appState.engine.refreshNow()
     }
 
     // Polished Toggle Cards

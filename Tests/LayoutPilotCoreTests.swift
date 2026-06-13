@@ -1,5 +1,5 @@
 import Carbon
-import LayoutPilotCore
+@testable import LayoutPilotCore
 import XCTest
 
 @MainActor
@@ -33,13 +33,142 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertNil(store.rule(for: "com.example.Test"))
     }
 
+    func testStoreUpsertReplacesRuleForSameBundleID() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        let us = store.configuration.profiles[0]
+        let russian = store.configuration.profiles[1]
+        let firstRule = ApplicationLayoutRule(
+            applicationBundleID: "com.example.Duplicate",
+            applicationName: "Duplicate",
+            profileID: us.id,
+            target: .profile,
+            isEnabled: true
+        )
+        let secondRule = ApplicationLayoutRule(
+            applicationBundleID: "com.example.Duplicate",
+            applicationName: "Duplicate",
+            profileID: russian.id,
+            target: .lastUsed,
+            isEnabled: false
+        )
+
+        store.upsertRule(firstRule)
+        store.upsertRule(secondRule)
+
+        let matchingRules = store.configuration.rules.filter { $0.applicationBundleID == "com.example.Duplicate" }
+        XCTAssertEqual(matchingRules.count, 1)
+        XCTAssertEqual(matchingRules.first?.target, .lastUsed)
+        XCTAssertFalse(matchingRules.first?.isEnabled ?? true)
+    }
+
+    func testStoreDeduplicatesRulesWhenLoadingConfiguration() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        var configuration = LayoutPilotConfiguration.default()
+        let us = configuration.profiles[0]
+        let russian = configuration.profiles[1]
+        configuration.rules = [
+            ApplicationLayoutRule(
+                applicationBundleID: "com.example.Duplicate",
+                applicationName: "Duplicate",
+                profileID: us.id,
+                target: .profile,
+                isEnabled: true
+            ),
+            ApplicationLayoutRule(
+                applicationBundleID: "com.example.Duplicate",
+                applicationName: "Duplicate",
+                profileID: russian.id,
+                target: .lastUsed,
+                isEnabled: false
+            )
+        ]
+
+        let data = try JSONEncoder().encode(configuration)
+        try data.write(to: fileURL)
+
+        let store = LayoutPilotStore(fileURL: fileURL)
+        let matchingRules = store.configuration.rules.filter { $0.applicationBundleID == "com.example.Duplicate" }
+
+        XCTAssertEqual(matchingRules.count, 1)
+        XCTAssertEqual(matchingRules.first?.target, .lastUsed)
+        XCTAssertFalse(matchingRules.first?.isEnabled ?? true)
+    }
+
+    func testApplicationLayoutRuleTargetDefaultsToProfileForExistingConfigurations() throws {
+        let profileID = UUID()
+        let data = """
+        {
+          "id": "\(UUID().uuidString)",
+          "applicationBundleID": "com.example.Legacy",
+          "applicationName": "Legacy",
+          "profileID": "\(profileID.uuidString)",
+          "isEnabled": true
+        }
+        """.data(using: .utf8)!
+
+        let rule = try JSONDecoder().decode(ApplicationLayoutRule.self, from: data)
+
+        XCTAssertEqual(rule.target, .profile)
+        XCTAssertEqual(rule.profileID, profileID)
+    }
+
+    func testApplicationLayoutRuleCanPersistLastUsedTarget() throws {
+        let rule = ApplicationLayoutRule(
+            applicationBundleID: "com.example.LastUsed",
+            applicationName: "Last Used",
+            profileID: UUID(),
+            target: .lastUsed
+        )
+
+        let data = try JSONEncoder().encode(rule)
+        let decoded = try JSONDecoder().decode(ApplicationLayoutRule.self, from: data)
+
+        XCTAssertEqual(decoded.target, .lastUsed)
+    }
+
+    func testRecentApplicationsAreDeduplicatedAndLimitedToThree() {
+        var recent: [RecentApplicationContext] = []
+
+        recent = LayoutAutomationEngine.updatedRecentApplications(
+            recent,
+            with: RecentApplicationContext(applicationName: "One", bundleID: "com.example.One")
+        )
+        recent = LayoutAutomationEngine.updatedRecentApplications(
+            recent,
+            with: RecentApplicationContext(applicationName: "Two", bundleID: "com.example.Two")
+        )
+        recent = LayoutAutomationEngine.updatedRecentApplications(
+            recent,
+            with: RecentApplicationContext(applicationName: "Three", bundleID: "com.example.Three")
+        )
+        recent = LayoutAutomationEngine.updatedRecentApplications(
+            recent,
+            with: RecentApplicationContext(applicationName: "Two", bundleID: "com.example.Two")
+        )
+        recent = LayoutAutomationEngine.updatedRecentApplications(
+            recent,
+            with: RecentApplicationContext(applicationName: "Four", bundleID: "com.example.Four")
+        )
+
+        XCTAssertEqual(recent.map(\.bundleID), [
+            "com.example.Four",
+            "com.example.Two",
+            "com.example.Three"
+        ])
+    }
+
     func testBilingualConversion() {
         let service = SmartInputService.shared
         
-        // Assert that short words/abbreviations of length < 3 never trigger bilingual conversion
-        XCTAssertNil(service.checkBilingualConversion(for: "дс"))
+        // Assert that arbitrary short words/abbreviations of length < 3 never trigger bilingual conversion
         XCTAssertNil(service.checkBilingualConversion(for: "lc"))
-        XCTAssertNil(service.checkBilingualConversion(for: "a"))
+        XCTAssertNil(service.checkBilingualConversion(for: "a")) // Latin 'a' under US is valid English (returns nil); under Russian, translates to 'f' which is not in commonEnglishShortWords (returns nil)
         
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let rawID = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
@@ -56,19 +185,82 @@ final class LayoutPilotCoreTests: XCTestCase {
         if isUS {
             // Under English layout, "hello" is valid English and should not trigger conversion
             XCTAssertNil(service.checkBilingualConversion(for: "hello"))
+            XCTAssertNil(service.checkBilingualConversion(for: "bbuhf["))
             
             // "ghbdtn" is English layout for "привет", should trigger conversion to Russian
             let privetResult = service.checkBilingualConversion(for: "ghbdtn")
             XCTAssertNotNil(privetResult)
             XCTAssertEqual(privetResult?.replacement, "привет")
+            
+            // Single-character tokens are too ambiguous for safe automatic conversion.
+            XCTAssertNil(service.checkBilingualConversion(for: "f"))
+            
+            // Short grammatical word: "ds" translates to "вы".
+            let vyResult = service.checkBilingualConversion(for: "ds")
+            XCTAssertNotNil(vyResult)
+            XCTAssertEqual(vyResult?.replacement, "вы")
         } else if isRussian {
             // Under Russian layout, "привет" is valid Russian and should not trigger conversion
             XCTAssertNil(service.checkBilingualConversion(for: "привет"))
+            
+            // "флешка" is a valid Russian neologism/word and should not be converted to English
+            XCTAssertNil(service.checkBilingualConversion(for: "флешка"))
+            XCTAssertNil(service.checkBilingualConversion(for: "грах"))
+            XCTAssertNil(service.checkBilingualConversion(for: "bbграх"))
             
             // "цщкдв" is Russian layout for "world", should trigger conversion to English
             let worldResult = service.checkBilingualConversion(for: "цщкдв")
             XCTAssertNotNil(worldResult)
             XCTAssertEqual(worldResult?.replacement, "world")
+            
+            // Single-character tokens are too ambiguous for safe automatic conversion.
+            XCTAssertNil(service.checkBilingualConversion(for: "ш"))
+            
+            // Short grammatical word: "ещ" translates to "to".
+            let toResult = service.checkBilingualConversion(for: "ещ")
+            XCTAssertNotNil(toResult)
+            XCTAssertEqual(toResult?.replacement, "to")
         }
+    }
+    
+    func testAvailableInputSourcesExcludePalettes() {
+        let client = SystemInputSourceClient()
+        let sources = client.availableInputSources()
+        
+        for source in sources {
+            XCTAssertNotEqual(source.sourceID, "com.apple.PressAndHold")
+            XCTAssertNotEqual(source.sourceID, "com.apple.CharacterPaletteIM")
+        }
+    }
+
+    func testContextAwareLayoutSwitching() {
+        let service = SmartInputService.shared
+        
+        // Reset context history
+        service.contextHistory.reset()
+        
+        // 1. Verify language detection
+        XCTAssertEqual(service.detectLanguage(of: "Привет"), .russian)
+        XCTAssertEqual(service.detectLanguage(of: "hello"), .english)
+        XCTAssertEqual(service.detectLanguage(of: "123"), .unknown)
+        XCTAssertEqual(service.detectLanguage(of: "Приветhello"), .unknown)
+        
+        // 2. Verify empty history triggers switch
+        XCTAssertTrue(service.shouldSwitchLayout(to: "en_layout", replacement: "hello"))
+        
+        // 3. Verify Russian context prevents switching to English for a single word
+        service.contextHistory.append("Если")
+        service.contextHistory.append("я")
+        service.contextHistory.append("хочу")
+        service.contextHistory.append("написать")
+        
+        XCTAssertFalse(service.shouldSwitchLayout(to: "en_layout", replacement: "applications"))
+        
+        // 4. Verify consecutive English words trigger layout switch
+        service.contextHistory.append("applications")
+        XCTAssertTrue(service.shouldSwitchLayout(to: "en_layout", replacement: "macos"))
+        
+        // 5. Clean up history
+        service.contextHistory.reset()
     }
 }

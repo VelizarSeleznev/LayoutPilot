@@ -33,7 +33,20 @@ public final class SmartInputService: @unchecked Sendable {
     
     private let uppercaseTriggers = Set<Character>([":", "\"", "{"])
     
-    private final class WordBuffer {
+    private let commonRussianShortWords: Set<String> = [
+        "а", "в", "и", "к", "о", "с", "у", "я",
+        "бы", "во", "вы", "да", "до", "ее", "её", "же", "за", "из", "им", "их", "ли", "мы", "на", "не", "но", "он", "от", "по", "со", "та", "те", "то", "ту", "ты",
+        "об", "уж", "ей", "ею", "ко"
+    ]
+
+    private let commonEnglishShortWords: Set<String> = [
+        "a", "i",
+        "am", "an", "as", "at", "be", "by", "do", "go", "he", "if", "in", "is", "it", "me", "my", "no", "of", "on", "or", "so", "to", "up", "us", "we",
+        "ah", "oh"
+    ]
+
+    
+    final class WordBuffer {
         var token = ""
         func append(_ text: String) {
             token += text
@@ -41,9 +54,35 @@ public final class SmartInputService: @unchecked Sendable {
         func reset() {
             token = ""
         }
+        func removeLast() {
+            if !token.isEmpty {
+                token.removeLast()
+            }
+        }
+    }
+    
+    final class ContextHistory {
+        private var words: [String] = []
+        private let maxCount = 5
+        
+        func append(_ word: String) {
+            words.append(word)
+            if words.count > maxCount {
+                words.removeFirst()
+            }
+        }
+        
+        func reset() {
+            words.removeAll()
+        }
+        
+        func getWords() -> [String] {
+            return words
+        }
     }
     
     private let buffer = WordBuffer()
+    let contextHistory = ContextHistory()
     private let checker = NSSpellChecker.shared
     
     private let lock = NSLock()
@@ -160,12 +199,41 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
+    private var _cachedEnglishLayoutID: String?
+    private var _cachedRussianLayoutID: String?
+
+    private var cachedEnglishLayoutID: String? {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _cachedEnglishLayoutID
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _cachedEnglishLayoutID = newValue
+        }
+    }
+
+    private var cachedRussianLayoutID: String? {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _cachedRussianLayoutID
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _cachedRussianLayoutID = newValue
+        }
+    }
+
     private struct LastReplacementInfo {
+        let mode: String
+        let reason: String
         let original: String
         let replacement: String
         let boundary: String
         let timestamp: Date
+        let bundleID: String?
         let originalLayoutID: String?
+        let targetLayoutID: String?
         var isActive: Bool
     }
 
@@ -181,10 +249,49 @@ public final class SmartInputService: @unchecked Sendable {
         isStarted = true
         
         requestAccessibilityPermissionIfNeeded()
+        cacheLayouts()
+        
+        NotificationCenter.default.addObserver(
+            forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.cacheLayouts()
+        }
         
         Thread.detachNewThread { [weak self] in
             self?.runEventLoop()
         }
+    }
+
+    private func cacheLayouts() {
+        if Thread.isMainThread {
+            self.performLayoutCaching()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.performLayoutCaching()
+            }
+        }
+    }
+
+    private func performLayoutCaching() {
+        let client = SystemInputSourceClient()
+        let sources = client.availableInputSources()
+        
+        let english = sources.first { source in
+            let id = source.sourceID.lowercased()
+            return (id.contains(".us") || id.contains(".abc") || source.languageTag?.hasPrefix("en") == true) &&
+                   !id.contains("characterpalette") && !id.contains("ink")
+        }?.sourceID ?? "com.apple.keylayout.US"
+        
+        let russian = sources.first { source in
+            let id = source.sourceID.lowercased()
+            return (id.contains("russian") || source.languageTag?.hasPrefix("ru") == true) &&
+                   !id.contains("characterpalette") && !id.contains("ink")
+        }?.sourceID ?? "com.apple.keylayout.RussianWin"
+        
+        self.cachedEnglishLayoutID = english
+        self.cachedRussianLayoutID = russian
     }
     
     private func runEventLoop() {
@@ -253,12 +360,46 @@ public final class SmartInputService: @unchecked Sendable {
             if let last = lastReplacement, last.isActive {
                 let elapsed = Date().timeIntervalSince(last.timestamp)
                 if elapsed <= _smartBilingualUndoDelay {
-                    performBilingualUndo(last)
+                    performReplacementUndo(last, elapsed: elapsed, keyCode: keyCode)
                     return nil // Swallow event!
                 } else {
                     lastReplacement?.isActive = false
+                    SmartInputEventLog.shared.record(.init(
+                        kind: "backspace_after_replacement_window",
+                        mode: last.mode,
+                        reason: "undo window expired",
+                        bundleID: last.bundleID,
+                        sourceLayoutID: last.originalLayoutID,
+                        targetLayoutID: last.targetLayoutID,
+                        original: last.original,
+                        replacement: last.replacement,
+                        boundary: last.boundary,
+                        keyCode: keyCode,
+                        bufferBefore: buffer.token,
+                        elapsedSinceReplacement: elapsed,
+                        replacementAgeLimit: _smartBilingualUndoDelay
+                    ))
                 }
             }
+            let bufferBefore = buffer.token
+            buffer.removeLast()
+            if bufferBefore != buffer.token {
+                SmartInputEventLog.shared.record(.init(
+                    kind: "backspace_buffer_update",
+                    reason: "removed last buffered character",
+                    bundleID: frontmostBundleID(),
+                    sourceLayoutID: currentInputSourceID(),
+                    keyCode: keyCode,
+                    bufferBefore: bufferBefore,
+                    bufferAfter: buffer.token
+                ))
+            }
+            return Unmanaged.passUnretained(event)
+        } else if keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126 || keyCode == 53 || keyCode == 48 || keyCode == 36 {
+            // Arrow keys (123-126), Escape (53), Tab (48), Return (36)
+            buffer.reset()
+            contextHistory.reset()
+            lastReplacement?.isActive = false
         } else {
             lastReplacement?.isActive = false
         }
@@ -286,17 +427,20 @@ public final class SmartInputService: @unchecked Sendable {
 
         guard isEnabled else {
             buffer.reset()
+            contextHistory.reset()
             return Unmanaged.passUnretained(event)
         }
         
         guard shouldHandleCurrentContext() else {
             buffer.reset()
+            contextHistory.reset()
             return Unmanaged.passUnretained(event)
         }
         
         let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
             buffer.reset()
+            contextHistory.reset()
             return Unmanaged.passUnretained(event)
         }
         
@@ -313,7 +457,18 @@ public final class SmartInputService: @unchecked Sendable {
                let sourceID = currentInputSourceID(),
                usInputSources.contains(sourceID),
                let replacement = replacementForCurrentToken() {
+                let originalToken = buffer.token
                 replaceToken(with: replacement, boundary: text)
+                recordReplacementForUndo(
+                    mode: "danish",
+                    reason: "valid Danish boundary replacement",
+                    original: originalToken,
+                    replacement: replacement,
+                    boundary: text,
+                    bundleID: activeBundleID,
+                    originalLayoutID: sourceID,
+                    targetLayoutID: nil
+                )
                 return nil
             }
             
@@ -323,23 +478,43 @@ public final class SmartInputService: @unchecked Sendable {
                 let originalLayoutID = currentInputSourceID()
                 let originalToken = buffer.token
                 
-                replaceToken(with: bilingualResult.replacement, boundary: text)
+                let (_, russianLayoutID) = findLayouts()
+                let isToRussian = (bilingualResult.targetLayoutID == russianLayoutID)
+                let convertedBoundary: String
+                if isToRussian {
+                    convertedBoundary = translateEnglishToRussian(text)
+                } else {
+                    convertedBoundary = translateRussianToEnglish(text)
+                }
+                
+                replaceToken(with: bilingualResult.replacement, boundary: convertedBoundary)
                 
                 recordReplacementForUndo(
+                    mode: "bilingual",
+                    reason: "converted token is more likely in opposing layout",
                     original: originalToken,
                     replacement: bilingualResult.replacement,
-                    boundary: text,
-                    originalLayoutID: originalLayoutID
+                    boundary: convertedBoundary,
+                    bundleID: activeBundleID,
+                    originalLayoutID: originalLayoutID,
+                    targetLayoutID: bilingualResult.targetLayoutID
                 )
                 
+                contextHistory.append(bilingualResult.replacement)
+                
                 if let targetLayoutID = bilingualResult.targetLayoutID {
-                    DispatchQueue.main.async {
-                        try? SystemInputSourceClient().activateInputSource(withID: targetLayoutID)
+                    if shouldSwitchLayout(to: targetLayoutID, replacement: bilingualResult.replacement) {
+                        DispatchQueue.main.async {
+                            try? SystemInputSourceClient().activateInputSource(withID: targetLayoutID)
+                        }
                     }
                 }
                 return nil
             }
             
+            if !buffer.token.isEmpty {
+                contextHistory.append(buffer.token)
+            }
             buffer.reset()
             return Unmanaged.passUnretained(event)
         }
@@ -355,7 +530,18 @@ public final class SmartInputService: @unchecked Sendable {
                usInputSources.contains(sourceID),
                (triggerMap.keys.contains(character) || startsWithTrigger(buffer.token)),
                let replacement = replacementForCurrentToken() {
+                let originalToken = buffer.token
                 replacePendingToken(with: replacement)
+                recordReplacementForUndo(
+                    mode: "danish",
+                    reason: "valid Danish pending replacement",
+                    original: originalToken,
+                    replacement: replacement,
+                    boundary: "",
+                    bundleID: activeBundleID,
+                    originalLayoutID: sourceID,
+                    targetLayoutID: nil
+                )
                 return nil
             }
             return Unmanaged.passUnretained(event)
@@ -547,7 +733,9 @@ public final class SmartInputService: @unchecked Sendable {
         down?.setIntegerValueField(.eventSourceUserData, value: magicEventTag)
         up?.setIntegerValueField(.eventSourceUserData, value: magicEventTag)
         down?.post(tap: .cghidEventTap)
+        usleep(3000)
         up?.post(tap: .cghidEventTap)
+        usleep(3000)
     }
     
     private func postText(_ text: String) {
@@ -563,7 +751,9 @@ public final class SmartInputService: @unchecked Sendable {
         down?.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
         up?.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
         down?.post(tap: .cghidEventTap)
+        usleep(3000)
         up?.post(tap: .cghidEventTap)
+        usleep(3000)
     }
     
     private func replaceToken(with replacement: String, boundary: String) {
@@ -609,25 +799,18 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func findLayouts() -> (english: String?, russian: String?) {
-        let client = SystemInputSourceClient()
-        let sources = client.availableInputSources()
-        
-        let english = sources.first { source in
-            let id = source.sourceID.lowercased()
-            return (id.contains(".us") || id.contains(".abc") || source.languageTag == "en") &&
-                   !id.contains("characterpalette") && !id.contains("ink")
-        }?.sourceID ?? "com.apple.keylayout.US"
-        
-        let russian = sources.first { source in
-            let id = source.sourceID.lowercased()
-            return (id.contains("russian") || source.languageTag == "ru") &&
-                   !id.contains("characterpalette") && !id.contains("ink")
-        }?.sourceID ?? "com.apple.keylayout.RussianWin"
-        
+        let english = cachedEnglishLayoutID ?? "com.apple.keylayout.US"
+        let russian = cachedRussianLayoutID ?? "com.apple.keylayout.RussianWin"
         return (english, russian)
     }
 
     private func isValidEnglishWord(_ word: String) -> Bool {
+        if word.count == 1 {
+            return commonEnglishShortWords.contains(word.lowercased())
+        }
+        if word.lowercased() == "i" {
+            return true
+        }
         let range = checker.checkSpelling(
             of: word,
             startingAt: 0,
@@ -640,6 +823,9 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func isValidRussianWord(_ word: String) -> Bool {
+        if word.count == 1 {
+            return commonRussianShortWords.contains(word.lowercased())
+        }
         let range = checker.checkSpelling(
             of: word,
             startingAt: 0,
@@ -657,13 +843,24 @@ public final class SmartInputService: @unchecked Sendable {
         return guesses != nil && !guesses!.isEmpty
     }
 
+    private func isLatinWord(_ word: String) -> Bool {
+        word.unicodeScalars.allSatisfy { scalar in
+            (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
+        }
+    }
+
+    private func isCyrillicWord(_ word: String) -> Bool {
+        word.unicodeScalars.allSatisfy { scalar in
+            (0x0400...0x04FF).contains(scalar.value)
+        }
+    }
+
     public struct BilingualResult {
         public let replacement: String
         public let targetLayoutID: String?
     }
 
     public func checkBilingualConversion(for token: String) -> BilingualResult? {
-        guard token.count >= 3 else { return nil }
         guard !token.isEmpty else { return nil }
         guard let sourceID = currentInputSourceID() else { return nil }
         
@@ -673,27 +870,72 @@ public final class SmartInputService: @unchecked Sendable {
                         sourceID.contains(".ru.") || 
                         sourceID == "ru"
         
+        if token.count == 1 {
+            return nil
+        }
+
+        if token.count < 3 {
+            if isUS {
+                guard isLatinWord(token) else { return nil }
+                if isValidEnglishWord(token) {
+                    return nil
+                }
+                let translated = translateEnglishToRussian(token)
+                if translated == token {
+                    return nil
+                }
+                guard isCyrillicWord(translated) else { return nil }
+                if commonRussianShortWords.contains(translated.lowercased()) && isValidRussianWord(translated) {
+                    let (_, russianLayoutID) = findLayouts()
+                    return BilingualResult(replacement: translated, targetLayoutID: russianLayoutID)
+                }
+            } else if isRussian {
+                guard isCyrillicWord(token) else { return nil }
+                if isValidRussianWord(token) {
+                    return nil
+                }
+                let translated = translateRussianToEnglish(token)
+                if translated == token {
+                    return nil
+                }
+                guard isLatinWord(translated) else { return nil }
+                if commonEnglishShortWords.contains(translated.lowercased()) && isValidEnglishWord(translated) {
+                    let (englishLayoutID, _) = findLayouts()
+                    return BilingualResult(replacement: translated, targetLayoutID: englishLayoutID)
+                }
+            }
+            return nil
+        }
+        
         if isUS {
+            guard isLatinWord(token) else { return nil }
             if isValidEnglishWord(token) {
                 return nil
             }
             
             let translated = translateEnglishToRussian(token)
+            guard isCyrillicWord(translated) else { return nil }
             let isWord = isValidRussianWord(translated)
-            let isLikelyWord = token.count >= 4 && hasGuesses(for: translated, language: "ru")
+            let isLikelyWord = token.count >= 4 &&
+                               hasGuesses(for: translated, language: "ru") &&
+                               !hasGuesses(for: token, language: "en")
             
             if isWord || isLikelyWord {
                 let (_, russianLayoutID) = findLayouts()
                 return BilingualResult(replacement: translated, targetLayoutID: russianLayoutID)
             }
         } else if isRussian {
+            guard isCyrillicWord(token) else { return nil }
             if isValidRussianWord(token) {
                 return nil
             }
             
             let translated = translateRussianToEnglish(token)
+            guard isLatinWord(translated) else { return nil }
             let isWord = isValidEnglishWord(translated)
-            let isLikelyWord = token.count >= 4 && hasGuesses(for: translated, language: "en")
+            let isLikelyWord = token.count >= 4 &&
+                               hasGuesses(for: translated, language: "en") &&
+                               !hasGuesses(for: token, language: "ru")
             
             if isWord || isLikelyWord {
                 let (englishLayoutID, _) = findLayouts()
@@ -704,18 +946,44 @@ public final class SmartInputService: @unchecked Sendable {
         return nil
     }
 
-    private func recordReplacementForUndo(original: String, replacement: String, boundary: String, originalLayoutID: String?) {
+    private func recordReplacementForUndo(
+        mode: String,
+        reason: String,
+        original: String,
+        replacement: String,
+        boundary: String,
+        bundleID: String?,
+        originalLayoutID: String?,
+        targetLayoutID: String?
+    ) {
         lastReplacement = LastReplacementInfo(
+            mode: mode,
+            reason: reason,
             original: original,
             replacement: replacement,
             boundary: boundary,
             timestamp: Date(),
+            bundleID: bundleID,
             originalLayoutID: originalLayoutID,
+            targetLayoutID: targetLayoutID,
             isActive: true
         )
+
+        SmartInputEventLog.shared.record(.init(
+            kind: "replacement",
+            mode: mode,
+            reason: reason,
+            bundleID: bundleID,
+            sourceLayoutID: originalLayoutID,
+            targetLayoutID: targetLayoutID,
+            original: original,
+            replacement: replacement,
+            boundary: boundary,
+            replacementAgeLimit: _smartBilingualUndoDelay
+        ))
     }
 
-    private func performBilingualUndo(_ last: LastReplacementInfo) {
+    private func performReplacementUndo(_ last: LastReplacementInfo, elapsed: Double, keyCode: Int64) {
         lastReplacement?.isActive = false
         
         let charsToDeleteCount = last.replacement.count + last.boundary.count
@@ -732,6 +1000,61 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         buffer.reset()
-        buffer.append(last.original)
+
+        SmartInputEventLog.shared.record(.init(
+            kind: "replacement_undo",
+            mode: last.mode,
+            reason: "backspace within undo window",
+            bundleID: last.bundleID,
+            sourceLayoutID: last.originalLayoutID,
+            targetLayoutID: last.targetLayoutID,
+            original: last.original,
+            replacement: last.replacement,
+            boundary: last.boundary,
+            keyCode: keyCode,
+            bufferAfter: buffer.token,
+            elapsedSinceReplacement: elapsed,
+            replacementAgeLimit: _smartBilingualUndoDelay
+        ))
+    }
+
+    enum WordLanguage {
+        case english
+        case russian
+        case unknown
+    }
+
+    func detectLanguage(of word: String) -> WordLanguage {
+        let hasCyrillic = word.unicodeScalars.contains { scalar in
+            (0x0400...0x04FF).contains(scalar.value)
+        }
+        let hasLatin = word.unicodeScalars.contains { scalar in
+            let val = scalar.value
+            return (97...122).contains(val) || (65...90).contains(val)
+        }
+        if hasCyrillic && !hasLatin { return .russian }
+        if hasLatin && !hasCyrillic { return .english }
+        return .unknown
+    }
+
+    func shouldSwitchLayout(to targetLayoutID: String, replacement: String) -> Bool {
+        let targetLang = detectLanguage(of: replacement)
+        guard targetLang != .unknown else { return true }
+        
+        let opposingLang: WordLanguage = (targetLang == .english) ? .russian : .english
+        let history = contextHistory.getWords()
+        
+        // Count opposing words in history
+        let opposingCount = history.filter { detectLanguage(of: $0) == opposingLang }.count
+        if opposingCount == 0 {
+            return true
+        }
+        
+        // Check if last word in history is also of target language (making it 2 consecutive target words)
+        if let lastWord = history.last, detectLanguage(of: lastWord) == targetLang {
+            return true
+        }
+        
+        return false
     }
 }

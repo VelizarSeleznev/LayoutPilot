@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.google.com/schemas/rss/sparkle/">
+    <channel>
+        <title>LayoutPilot Updates</title>
+        <link>https://velizarseleznev.github.io/LayoutPilot/appcast.xml</link>
+        <description>Most recent updates for LayoutPilot.</description>
+        <language>en</language>
+        <!-- 
+        To release a new update:
+        1. Compile LayoutPilot.dmg using ./script/package_dmg.sh
+        2. Sign the DMG using ./script/sign_update.py LayoutPilot.dmg
+        3. Upload the DMG to GitHub Releases under tag vX.Y
+        4. Copy the generated <item> XML from the signing output, paste it here, and commit/push docs/appcast.xml to github.
+        -->
+        <item>
+            <title>LayoutPilot Update (Context-Aware Layout Switching)</title>
+            <pubDate>Tue, 02 Jun 2026 17:27:43 +0200</pubDate>
+            <sparkle:version>1.1</sparkle:version>
+            <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
+            <enclosure 
+                url="https://github.com/VelizarSeleznev/LayoutPilot/releases/download/v1.1/LayoutPilot.dmg"
+                length="2361240"
+                type="application/octet-stream"
+                sparkle:edSignature="1pqNSooja/FYpr7hxSpglTQcyUAMf6iKMnBfmCi54Dm51u56FHhrWiiBXW/jFtkl06eJxmdnCJwsxtr5vGhqBw==" />
+        </item>
+    </channel>
+</rss>

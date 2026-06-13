@@ -158,8 +158,8 @@ struct RulesView: View {
                                 .lineLimit(1)
                                 .foregroundColor(isAutoSwitchingActive || config.isSmartInputEnabled ? .primary : .secondary)
                             
-                            if config.rule != nil && config.rule!.isEnabled {
-                                Text(isAutoSwitchingGloballyEnabled ? profileName(for: config.rule!.profileID) : "\(profileName(for: config.rule!.profileID)) (Suspended)")
+                            if let rule = config.rule, rule.isEnabled {
+                                Text(isAutoSwitchingGloballyEnabled ? targetName(for: rule) : "\(targetName(for: rule)) (Suspended)")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -285,8 +285,13 @@ struct RulesView: View {
         draft = newRule
     }
 
-    private func profileName(for profileID: UUID) -> String {
-        appState.store.profile(for: profileID)?.name ?? "Missing profile"
+    private func targetName(for rule: ApplicationLayoutRule) -> String {
+        switch rule.target {
+        case .profile:
+            return appState.store.profile(for: rule.profileID)?.name ?? "Missing profile"
+        case .lastUsed:
+            return "Last Used"
+        }
     }
 
     private func appName(for bundleID: String) -> String {
@@ -370,7 +375,7 @@ private struct RuleEditorView: View {
                 .padding(.bottom, 8)
                 
                 // Profile Missing Warning Banner
-                if rule.isEnabled && !profileChoices.contains(where: { $0.id == rule.profileID }) {
+                if rule.isEnabled && rule.target == .profile && !profileChoices.contains(where: { $0.id == rule.profileID }) {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.title2)
@@ -405,15 +410,23 @@ private struct RuleEditorView: View {
                     }
                     
                     if rule.isEnabled {
-                        Picker("Target Layout Profile", selection: $rule.profileID) {
-                            if !profileChoices.contains(where: { $0.id == rule.profileID }) {
-                                Text("⚠️ Profile Not Configured").tag(rule.profileID)
-                            }
-                            ForEach(profileChoices) { profile in
-                                Text(profile.name).tag(profile.id)
-                            }
+                        Picker("Switch To", selection: $rule.target) {
+                            Text("Layout Profile").tag(ApplicationLayoutRuleTarget.profile)
+                            Text("Last Used").tag(ApplicationLayoutRuleTarget.lastUsed)
                         }
-                        .pickerStyle(.menu)
+                        .pickerStyle(.segmented)
+
+                        if rule.target == .profile {
+                            Picker("Target Layout Profile", selection: $rule.profileID) {
+                                if !profileChoices.contains(where: { $0.id == rule.profileID }) {
+                                    Text("Profile Not Configured").tag(rule.profileID)
+                                }
+                                ForEach(profileChoices) { profile in
+                                    Text(profile.name).tag(profile.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
                     } else {
                         Text("Keyboard layout switching is suspended for this app.")
                             .font(.caption)

@@ -39,8 +39,27 @@ struct SettingsView: View {
 
                 Toggle("Launch at login", isOn: Binding(
                     get: { appState.store.configuration.launchAtLogin },
-                    set: { appState.store.setLaunchAtLogin($0) }
+                    set: { appState.setLaunchAtLogin($0) }
                 ))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Launch item status: \(appState.launchAtLoginState.statusDescription)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if appState.launchAtLoginState.requiresApproval {
+                        Text("Approve LayoutPilot in System Settings > General > Login Items.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+
+                    if let errorMessage = appState.launchAtLoginState.errorMessage {
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
             }
             .tabItem {
                 Label("General", systemImage: "gearshape")
@@ -70,4 +89,3 @@ struct SettingsView: View {
         .scenePadding()
     }
 }
-

@@ -6,12 +6,17 @@ import Observation
 @Observable
 public final class LayoutAutomationEngine {
     public private(set) var snapshot = AutomationSnapshot()
+    public private(set) var recentApplications: [RecentApplicationContext] = []
     public private(set) var isRunning = false
     public private(set) var lastErrorMessage: String?
+
+    nonisolated static let recentApplicationLimit = 3
 
     private let store: LayoutPilotStore
     private let inputSourceClient: InputSourceClient
     private var notificationTokens: [NSObjectProtocol] = []
+    private var previousBundleID: String?
+    private var lastUsedInputSourceByBundleID: [String: String] = [:]
 
     public init(
         store: LayoutPilotStore,
@@ -56,6 +61,8 @@ public final class LayoutAutomationEngine {
         let currentSourceID = inputSourceClient.currentInputSourceID() ?? "Unknown"
         let bundleID = frontmostApp?.bundleIdentifier ?? "Unknown"
         let appName = frontmostApp?.localizedName ?? "Unknown"
+        rememberLastUsedInputSource(currentSourceID, forPreviousBundleBeforeActivating: bundleID)
+        rememberRecentApplication(applicationName: appName, bundleID: bundleID)
 
         guard store.configuration.automationEnabled else {
             snapshot = AutomationSnapshot(
@@ -79,6 +86,63 @@ public final class LayoutAutomationEngine {
             return
         }
 
+        switch rule.target {
+        case .profile:
+            applyProfileRule(
+                rule,
+                appName: appName,
+                bundleID: bundleID,
+                currentSourceID: currentSourceID
+            )
+        case .lastUsed:
+            applyLastUsedRule(
+                rule,
+                appName: appName,
+                bundleID: bundleID,
+                currentSourceID: currentSourceID
+            )
+        }
+    }
+
+    nonisolated static func updatedRecentApplications(
+        _ recentApplications: [RecentApplicationContext],
+        with application: RecentApplicationContext,
+        limit: Int = recentApplicationLimit
+    ) -> [RecentApplicationContext] {
+        guard application.bundleID != "Unknown" else {
+            return recentApplications
+        }
+
+        var updated = recentApplications.filter { $0.bundleID != application.bundleID }
+        updated.insert(application, at: 0)
+        return Array(updated.prefix(limit))
+    }
+
+    private func rememberLastUsedInputSource(_ currentSourceID: String, forPreviousBundleBeforeActivating activeBundleID: String) {
+        defer { previousBundleID = activeBundleID == "Unknown" ? previousBundleID : activeBundleID }
+
+        guard currentSourceID != "Unknown",
+              let previousBundleID,
+              previousBundleID != activeBundleID else {
+            return
+        }
+
+        lastUsedInputSourceByBundleID[previousBundleID] = currentSourceID
+    }
+
+    private func rememberRecentApplication(applicationName: String, bundleID: String) {
+        recentApplications = Self.updatedRecentApplications(
+            recentApplications,
+            with: RecentApplicationContext(applicationName: applicationName, bundleID: bundleID)
+        )
+    }
+
+    private func applyProfileRule(
+        _ rule: ApplicationLayoutRule,
+        appName: String,
+        bundleID: String,
+        currentSourceID: String
+    ) {
         guard let profile = store.profile(for: rule.profileID) else {
             snapshot = AutomationSnapshot(
                 frontmostApplicationName: appName,
@@ -118,6 +182,59 @@ public final class LayoutAutomationEngine {
                 frontmostBundleID: bundleID,
                 currentInputSourceID: currentSourceID,
                 matchedRuleDescription: "Matched \(rule.applicationName) -> \(profile.name)",
+                lastAction: "Switch failed"
+            )
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyLastUsedRule(
+        _ rule: ApplicationLayoutRule,
+        appName: String,
+        bundleID: String,
+        currentSourceID: String
+    ) {
+        let description = "Matched \(rule.applicationName) -> Last Used"
+        guard let targetSourceID = lastUsedInputSourceByBundleID[bundleID] else {
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: description,
+                lastAction: "No last used layout yet"
+            )
+            lastErrorMessage = nil
+            return
+        }
+
+        if targetSourceID == currentSourceID {
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: description,
+                lastAction: "Already on last used layout"
+            )
+            lastErrorMessage = nil
+            return
+        }
+
+        do {
+            try inputSourceClient.activateInputSource(withID: targetSourceID)
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: targetSourceID,
+                matchedRuleDescription: description,
+                lastAction: "Switched to last used layout"
+            )
+            lastErrorMessage = nil
+        } catch {
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: description,
                 lastAction: "Switch failed"
             )
             lastErrorMessage = error.localizedDescription
