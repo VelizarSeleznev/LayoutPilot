@@ -16,6 +16,12 @@ Persistent state is stored at:
 
 `~/Library/Application Support/LayoutPilot/configuration.json`
 
+## Git workflow
+
+- Keep completed work committed. After implementing and verifying a coherent change, stage the relevant files and create a focused commit before ending the task.
+- Do not commit generated local artifacts such as `.build/`, `LayoutPilot.xcodeproj/`, or generated `.dmg` files.
+- If unrelated user changes are already present, leave them intact and commit only the files that belong to the current task.
+
 ## Releasing Updates
 
 To publish a new update for LayoutPilot:
@@ -40,5 +46,4 @@ To publish a new update for LayoutPilot:
 - automatic input-source switching by frontmost bundle ID
 - UI for app rules and input profiles
 - placeholder LLM settings for future expansion
-
 

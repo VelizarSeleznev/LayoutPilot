@@ -42,3 +42,14 @@ Before proposing or performing any build:
    ```sh
    ./script/build_and_run.sh run
    ```
+
+---
+
+## ✅ Git Hygiene: Commit Completed Changes
+
+AI agents must not leave completed source changes floating in the working tree.
+
+* After a coherent code or documentation change is implemented and verified, stage the relevant files and create a git commit before handing the task back.
+* Keep commits focused and descriptive. Do not mix unrelated cleanup, generated artifacts, or user work into an implementation commit unless the user explicitly asks for that scope.
+* Do not commit local build artifacts such as `.build/`, `LayoutPilot.xcodeproj/`, or generated `.dmg` files.
+* If the working tree already contains unrelated user changes, preserve them. Commit only the files that belong to the current task, or clearly state why a clean commit cannot be made safely.
