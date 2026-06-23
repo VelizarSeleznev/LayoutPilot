@@ -79,64 +79,6 @@ public struct RecentApplicationContext: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct TranslationLanguage: Identifiable, Codable, Hashable, Sendable {
-    public var id: String { code }
-    public var code: String
-    public var name: String
-    public var shortcutKey: String
-    public var keyCode: Int
-    public var isEnabled: Bool
-
-    public init(code: String, name: String, shortcutKey: String, keyCode: Int, isEnabled: Bool) {
-        self.code = code
-        self.name = name
-        self.shortcutKey = shortcutKey
-        self.keyCode = keyCode
-        self.isEnabled = isEnabled
-    }
-}
-
-public struct LLMConfiguration: Codable, Hashable, Sendable {
-    public var isEnabled: Bool
-    public var endpointURL: String
-    public var model: String
-    public var translationEnabled: Bool?
-    public var translationLanguages: [TranslationLanguage]?
-
-    public init(
-        isEnabled: Bool = false,
-        endpointURL: String = "http://127.0.0.1:1234/v1",
-        model: String = "google/gemma-4-e4b"
-    ) {
-        self.isEnabled = isEnabled
-        self.endpointURL = endpointURL
-        self.model = model
-        self.translationEnabled = true
-        self.translationLanguages = [
-            TranslationLanguage(code: "en", name: "English", shortcutKey: "E", keyCode: 14, isEnabled: true),
-            TranslationLanguage(code: "ru", name: "Russian", shortcutKey: "R", keyCode: 15, isEnabled: true),
-            TranslationLanguage(code: "da", name: "Danish", shortcutKey: "D", keyCode: 2, isEnabled: true),
-            TranslationLanguage(code: "es", name: "Spanish", shortcutKey: "S", keyCode: 1, isEnabled: false),
-            TranslationLanguage(code: "de", name: "German", shortcutKey: "G", keyCode: 5, isEnabled: false)
-        ]
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
-        self.endpointURL = try container.decodeIfPresent(String.self, forKey: .endpointURL) ?? "http://127.0.0.1:1234/v1"
-        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? "google/gemma-4-e4b"
-        self.translationEnabled = try container.decodeIfPresent(Bool.self, forKey: .translationEnabled) ?? true
-        self.translationLanguages = try container.decodeIfPresent([TranslationLanguage].self, forKey: .translationLanguages) ?? [
-            TranslationLanguage(code: "en", name: "English", shortcutKey: "E", keyCode: 14, isEnabled: true),
-            TranslationLanguage(code: "ru", name: "Russian", shortcutKey: "R", keyCode: 15, isEnabled: true),
-            TranslationLanguage(code: "da", name: "Danish", shortcutKey: "D", keyCode: 2, isEnabled: true),
-            TranslationLanguage(code: "es", name: "Spanish", shortcutKey: "S", keyCode: 1, isEnabled: false),
-            TranslationLanguage(code: "de", name: "German", shortcutKey: "G", keyCode: 5, isEnabled: false)
-        ]
-    }
-}
-
 public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var automationEnabled: Bool
     public var launchAtLogin: Bool
@@ -146,9 +88,16 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var smartBilingualEnabled: Bool
     public var smartBilingualAllowedBundleIDs: [String]
     public var smartBilingualUndoDelay: Double
+    /// When enabled, apps without an explicit rule fall back to `defaultAutoSwitchTarget`.
+    public var defaultAutoSwitchEnabled: Bool
+    public var defaultAutoSwitchTarget: ApplicationLayoutRuleTarget
+    public var defaultAutoSwitchProfileID: UUID?
+    /// When enabled, smart RU/EN autocorrection applies to every app (except built-in exclusions).
+    public var smartBilingualApplyToAll: Bool
+    /// When enabled, smart Danish input applies to every app (except built-in exclusions).
+    public var smartDanishApplyToAll: Bool
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
-    public var llm: LLMConfiguration
 
     public init(
         automationEnabled: Bool = true,
@@ -159,9 +108,13 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         smartBilingualEnabled: Bool = true,
         smartBilingualAllowedBundleIDs: [String] = [],
         smartBilingualUndoDelay: Double = 0.5,
+        defaultAutoSwitchEnabled: Bool = false,
+        defaultAutoSwitchTarget: ApplicationLayoutRuleTarget = .lastUsed,
+        defaultAutoSwitchProfileID: UUID? = nil,
+        smartBilingualApplyToAll: Bool = false,
+        smartDanishApplyToAll: Bool = false,
         profiles: [InputLayoutProfile],
-        rules: [ApplicationLayoutRule],
-        llm: LLMConfiguration = .init()
+        rules: [ApplicationLayoutRule]
     ) {
         self.automationEnabled = automationEnabled
         self.launchAtLogin = launchAtLogin
@@ -171,9 +124,13 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartBilingualEnabled = smartBilingualEnabled
         self.smartBilingualAllowedBundleIDs = smartBilingualAllowedBundleIDs
         self.smartBilingualUndoDelay = smartBilingualUndoDelay
+        self.defaultAutoSwitchEnabled = defaultAutoSwitchEnabled
+        self.defaultAutoSwitchTarget = defaultAutoSwitchTarget
+        self.defaultAutoSwitchProfileID = defaultAutoSwitchProfileID
+        self.smartBilingualApplyToAll = smartBilingualApplyToAll
+        self.smartDanishApplyToAll = smartDanishApplyToAll
         self.profiles = profiles
         self.rules = rules
-        self.llm = llm
     }
 
     enum CodingKeys: String, CodingKey {
@@ -185,9 +142,13 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case smartBilingualEnabled
         case smartBilingualAllowedBundleIDs
         case smartBilingualUndoDelay
+        case defaultAutoSwitchEnabled
+        case defaultAutoSwitchTarget
+        case defaultAutoSwitchProfileID
+        case smartBilingualApplyToAll
+        case smartDanishApplyToAll
         case profiles
         case rules
-        case llm
     }
 
     public init(from decoder: Decoder) throws {
@@ -200,9 +161,13 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartBilingualEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualEnabled) ?? true
         self.smartBilingualAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartBilingualAllowedBundleIDs) ?? self.smartDanishInputAllowedBundleIDs
         self.smartBilingualUndoDelay = try container.decodeIfPresent(Double.self, forKey: .smartBilingualUndoDelay) ?? 0.5
+        self.defaultAutoSwitchEnabled = try container.decodeIfPresent(Bool.self, forKey: .defaultAutoSwitchEnabled) ?? false
+        self.defaultAutoSwitchTarget = try container.decodeIfPresent(ApplicationLayoutRuleTarget.self, forKey: .defaultAutoSwitchTarget) ?? .lastUsed
+        self.defaultAutoSwitchProfileID = try container.decodeIfPresent(UUID.self, forKey: .defaultAutoSwitchProfileID)
+        self.smartBilingualApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualApplyToAll) ?? false
+        self.smartDanishApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartDanishApplyToAll) ?? false
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
-        self.llm = try container.decodeIfPresent(LLMConfiguration.self, forKey: .llm) ?? .init()
     }
 
     public static func `default`() -> LayoutPilotConfiguration {
@@ -219,6 +184,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
 
         let defaultApps = [
             "com.apple.Safari",
+            SystemApplicationContexts.spotlight.bundleID,
             "com.apple.Notes",
             "com.apple.TextEdit",
             "com.apple.mail",
@@ -253,6 +219,12 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
             profiles: [us, russian],
             rules: [
                 ApplicationLayoutRule(
+                    applicationBundleID: SystemApplicationContexts.spotlight.bundleID,
+                    applicationName: SystemApplicationContexts.spotlight.applicationName,
+                    profileID: us.id,
+                    target: .lastUsed
+                ),
+                ApplicationLayoutRule(
                     applicationBundleID: "com.microsoft.Word",
                     applicationName: "Microsoft Word",
                     profileID: russian.id
@@ -267,8 +239,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
                     applicationName: "Terminal",
                     profileID: us.id
                 )
-            ],
-            llm: .init()
+            ]
         )
     }
 }
@@ -298,8 +269,8 @@ public struct AutomationSnapshot: Hashable, Sendable {
 public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendable {
     case overview
     case rules
-    case translation
     case profiles
+    case chat
     case diagnostics
 
     public var id: String { rawValue }
@@ -310,10 +281,10 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "Overview"
         case .rules:
             return "Applications"
-        case .translation:
-            return "LLM Translation"
         case .profiles:
             return "Input Profiles"
+        case .chat:
+            return "LLM Chat (Test)"
         case .diagnostics:
             return "Diagnostics"
         }
@@ -325,10 +296,10 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "rectangle.3.group"
         case .rules:
             return "app.badge"
-        case .translation:
-            return "translate"
         case .profiles:
             return "keyboard"
+        case .chat:
+            return "bubble.left.and.bubble.right"
         case .diagnostics:
             return "waveform.path.ecg"
         }

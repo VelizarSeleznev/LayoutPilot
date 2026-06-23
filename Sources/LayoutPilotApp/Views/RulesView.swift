@@ -530,14 +530,21 @@ struct AppInfo: Identifiable, Hashable {
     }
     
     static func discoverApplications() -> [AppInfo] {
-        var apps: [AppInfo] = []
+        var apps: [AppInfo] = [
+            AppInfo(
+                name: SystemApplicationContexts.spotlight.applicationName,
+                bundleID: SystemApplicationContexts.spotlight.bundleID,
+                url: NSWorkspace.shared.urlForApplication(withBundleIdentifier: SystemApplicationContexts.spotlight.bundleID),
+                isRunning: NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == SystemApplicationContexts.spotlight.bundleID }
+            )
+        ]
         let fileManager = FileManager.default
         
         // 1. Add running apps
         let running = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular }
         
-        var seenBundleIDs = Set<String>()
+        var seenBundleIDs = Set(apps.map(\.bundleID))
         
         for app in running {
             if let name = app.localizedName, let bundleID = app.bundleIdentifier {

@@ -20,13 +20,9 @@ final class LayoutPilotAppState {
             SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
             SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
             SmartInputService.shared.smartBilingualUndoDelay = store.configuration.smartBilingualUndoDelay
-            
-            // Sync translation settings
-            SmartInputService.shared.translationEnabled = store.configuration.llm.translationEnabled ?? true
-            SmartInputService.shared.translationEndpointURL = store.configuration.llm.endpointURL
-            SmartInputService.shared.translationModel = store.configuration.llm.model
-            SmartInputService.shared.translationLanguages = store.configuration.llm.translationLanguages ?? []
-            
+            SmartInputService.shared.smartBilingualApplyToAll = store.configuration.smartBilingualApplyToAll
+            SmartInputService.shared.danishApplyToAll = store.configuration.smartDanishApplyToAll
+
             // Sync launch at login
             self?.launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
         }
@@ -37,16 +33,15 @@ final class LayoutPilotAppState {
         SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
         SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
         SmartInputService.shared.smartBilingualUndoDelay = store.configuration.smartBilingualUndoDelay
-        
-        // Sync translation settings on launch
-        SmartInputService.shared.translationEnabled = store.configuration.llm.translationEnabled ?? true
-        SmartInputService.shared.translationEndpointURL = store.configuration.llm.endpointURL
-        SmartInputService.shared.translationModel = store.configuration.llm.model
-        SmartInputService.shared.translationLanguages = store.configuration.llm.translationLanguages ?? []
-        
+
         // Sync launch at login on launch
         launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
         
+        // Global Rewrite hotkey (⌥⇧R) → on-device LLM rewrite of the selection.
+        SmartInputService.shared.onRewriteHotkey = {
+            Task { @MainActor in RewriteService.shared.run() }
+        }
+
         SmartInputService.shared.start()
     }
 

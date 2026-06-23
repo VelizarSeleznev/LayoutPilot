@@ -8,8 +8,8 @@ final class LayoutPilotCoreTests: XCTestCase {
         let configuration = LayoutPilotConfiguration.default()
 
         XCTAssertEqual(configuration.profiles.count, 2)
-        XCTAssertGreaterThanOrEqual(configuration.rules.count, 3)
-        XCTAssertEqual(configuration.rules.first?.applicationBundleID, "com.microsoft.Word")
+        XCTAssertGreaterThanOrEqual(configuration.rules.count, 4)
+        XCTAssertTrue(configuration.rules.contains { $0.applicationBundleID == SystemApplicationContexts.spotlight.bundleID })
     }
 
     func testStoreCanUpsertAndDeleteRulesInTemporaryFile() throws {
@@ -31,6 +31,44 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(store.rule(for: "com.example.Test")?.applicationName, "Test")
         store.deleteRule(id: rule.id)
         XCTAssertNil(store.rule(for: "com.example.Test"))
+    }
+
+    func testEffectiveRuleAppliesGlobalDefaultWhenNoExplicitRule() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        // No default configured yet: an unknown app gets no rule.
+        XCTAssertNil(store.effectiveRule(for: "com.unknown.App", applicationName: "Unknown"))
+
+        store.setDefaultAutoSwitchTarget(.lastUsed)
+        store.setDefaultAutoSwitchEnabled(true)
+
+        let resolved = store.effectiveRule(for: "com.unknown.App", applicationName: "Unknown")
+        XCTAssertEqual(resolved?.target, .lastUsed)
+        XCTAssertTrue(resolved?.isEnabled ?? false)
+        XCTAssertEqual(resolved?.applicationBundleID, "com.unknown.App")
+    }
+
+    func testEffectiveRuleRespectsExplicitlyDisabledRuleOverDefault() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        store.setDefaultAutoSwitchEnabled(true)
+        store.setDefaultAutoSwitchTarget(.lastUsed)
+
+        let profile = InputLayoutProfile(name: "Test", inputSourceID: "com.apple.keylayout.US")
+        store.upsertProfile(profile)
+        store.upsertRule(ApplicationLayoutRule(
+            applicationBundleID: "com.opted.Out",
+            applicationName: "Opted Out",
+            profileID: profile.id,
+            isEnabled: false
+        ))
+
+        // An explicit disabled rule opts the app out of the global default.
+        XCTAssertNil(store.effectiveRule(for: "com.opted.Out", applicationName: "Opted Out"))
     }
 
     func testStoreUpsertReplacesRuleForSameBundleID() throws {
@@ -100,6 +138,56 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(matchingRules.first?.isEnabled ?? true)
     }
 
+    func testStoreAddsSpotlightRuleWhenLoadingExistingConfiguration() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let us = InputLayoutProfile(name: "U.S.", inputSourceID: "com.apple.keylayout.US")
+        let configuration = LayoutPilotConfiguration(
+            profiles: [us],
+            rules: []
+        )
+
+        let data = try JSONEncoder().encode(configuration)
+        try data.write(to: fileURL)
+
+        let store = LayoutPilotStore(fileURL: fileURL)
+        let spotlightRule = store.rule(for: SystemApplicationContexts.spotlight.bundleID)
+
+        XCTAssertEqual(spotlightRule?.applicationName, SystemApplicationContexts.spotlight.applicationName)
+        XCTAssertEqual(spotlightRule?.profileID, us.id)
+        XCTAssertEqual(spotlightRule?.target, .lastUsed)
+    }
+
+    func testStoreMigratesDefaultSpotlightUSRuleToLastUsedWhenDefaultIsLastUsed() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let us = InputLayoutProfile(name: "U.S.", inputSourceID: "com.apple.keylayout.US")
+        let configuration = LayoutPilotConfiguration(
+            defaultAutoSwitchTarget: .lastUsed,
+            profiles: [us],
+            rules: [
+                ApplicationLayoutRule(
+                    applicationBundleID: SystemApplicationContexts.spotlight.bundleID,
+                    applicationName: SystemApplicationContexts.spotlight.applicationName,
+                    profileID: us.id,
+                    target: .profile
+                )
+            ]
+        )
+
+        let data = try JSONEncoder().encode(configuration)
+        try data.write(to: fileURL)
+
+        let store = LayoutPilotStore(fileURL: fileURL)
+        let spotlightRule = store.rule(for: SystemApplicationContexts.spotlight.bundleID)
+
+        XCTAssertEqual(spotlightRule?.target, .lastUsed)
+    }
+
     func testApplicationLayoutRuleTargetDefaultsToProfileForExistingConfigurations() throws {
         let profileID = UUID()
         let data = """
@@ -161,6 +249,46 @@ final class LayoutPilotCoreTests: XCTestCase {
             "com.example.Two",
             "com.example.Three"
         ])
+    }
+
+    func testLastUsedRuleDoesNotFightManualSwitchInActiveApp() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+        store.configuration = LayoutPilotConfiguration(
+            automationEnabled: true,
+            defaultAutoSwitchEnabled: true,
+            defaultAutoSwitchTarget: .lastUsed,
+            profiles: [InputLayoutProfile(name: "U.S.", inputSourceID: "us")],
+            rules: []
+        )
+
+        let inputSourceClient = FakeInputSourceClient(currentSourceID: "ru")
+        var activeContext = RecentApplicationContext(applicationName: "Editor", bundleID: "com.example.Editor")
+        let engine = LayoutAutomationEngine(
+            store: store,
+            inputSourceClient: inputSourceClient,
+            activeContextProvider: { activeContext }
+        )
+
+        engine.refreshNow()
+        XCTAssertTrue(inputSourceClient.activatedSourceIDs.isEmpty)
+
+        inputSourceClient.currentSourceID = "us"
+        engine.refreshNow()
+        XCTAssertTrue(inputSourceClient.activatedSourceIDs.isEmpty)
+
+        activeContext = RecentApplicationContext(applicationName: "Browser", bundleID: "com.example.Browser")
+        engine.refreshNow()
+        XCTAssertTrue(inputSourceClient.activatedSourceIDs.isEmpty)
+
+        inputSourceClient.currentSourceID = "ru"
+        engine.refreshNow()
+        XCTAssertTrue(inputSourceClient.activatedSourceIDs.isEmpty)
+
+        activeContext = RecentApplicationContext(applicationName: "Editor", bundleID: "com.example.Editor")
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us"])
     }
 
     func testBilingualConversion() {
@@ -262,5 +390,81 @@ final class LayoutPilotCoreTests: XCTestCase {
         
         // 5. Clean up history
         service.contextHistory.reset()
+    }
+
+    func testSingleLetterConversionUsesStrongContextOnly() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+
+        XCTAssertNil(service.checkBilingualConversion(
+            for: "b",
+            sourceLayoutID: "com.apple.keylayout.US",
+            contextWords: []
+        ))
+
+        let result = service.checkBilingualConversion(
+            for: "b",
+            sourceLayoutID: "com.apple.keylayout.US",
+            contextWords: ["Если", "я", "пишу", "текст"]
+        )
+        XCTAssertEqual(result?.replacement, "и")
+    }
+
+    func testRejectedConversionIsSuppressedByLearningStore() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let store = SmartInputLearningStore(fileURL: storeURL)
+        let service = SmartInputService(learningStore: store)
+
+        let beforeLearning = service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            contextWords: ["пишу", "новый"]
+        )
+        XCTAssertEqual(beforeLearning?.replacement, "bygen")
+
+        store.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Editor"
+        )
+
+        let afterLearning = service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            contextWords: ["пишу", "новый"]
+        )
+        XCTAssertNil(afterLearning)
+    }
+}
+
+private final class FakeInputSourceClient: InputSourceClient {
+    var currentSourceID: String
+    private(set) var activatedSourceIDs: [String] = []
+
+    init(currentSourceID: String) {
+        self.currentSourceID = currentSourceID
+    }
+
+    func currentInputSourceID() -> String? {
+        currentSourceID
+    }
+
+    func availableInputSources() -> [InputSourceInfo] {
+        [
+            InputSourceInfo(sourceID: "us", localizedName: "U.S."),
+            InputSourceInfo(sourceID: "ru", localizedName: "Russian")
+        ]
+    }
+
+    func activateInputSource(withID inputSourceID: String) throws {
+        activatedSourceIDs.append(inputSourceID)
+        currentSourceID = inputSourceID
     }
 }

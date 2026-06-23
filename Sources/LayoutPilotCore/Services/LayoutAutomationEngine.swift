@@ -14,16 +14,22 @@ public final class LayoutAutomationEngine {
 
     private let store: LayoutPilotStore
     private let inputSourceClient: InputSourceClient
+    private let activeContextProvider: () -> RecentApplicationContext
     private var notificationTokens: [NSObjectProtocol] = []
+    private var refreshTimer: DispatchSourceTimer?
     private var previousBundleID: String?
     private var lastUsedInputSourceByBundleID: [String: String] = [:]
 
     public init(
         store: LayoutPilotStore,
-        inputSourceClient: InputSourceClient = SystemInputSourceClient()
+        inputSourceClient: InputSourceClient = SystemInputSourceClient(),
+        activeContextProvider: @escaping () -> RecentApplicationContext = {
+            SystemApplicationContexts.activeContext(frontmostApplication: NSWorkspace.shared.frontmostApplication)
+        }
     ) {
         self.store = store
         self.inputSourceClient = inputSourceClient
+        self.activeContextProvider = activeContextProvider
     }
 
     public func start() {
@@ -44,10 +50,25 @@ public final class LayoutAutomationEngine {
                 }
             }
         )
+        let refreshTimer = DispatchSource.makeTimerSource(
+            queue: DispatchQueue(label: "com.velizard.LayoutPilot.layout-refresh")
+        )
+        refreshTimer.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250))
+        refreshTimer.setEventHandler { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.refreshNow()
+                }
+            }
+        }
+        refreshTimer.resume()
+        self.refreshTimer = refreshTimer
         refreshNow()
     }
 
     public func stop() {
+        refreshTimer?.cancel()
+        refreshTimer = nil
         let center = NSWorkspace.shared.notificationCenter
         for token in notificationTokens {
             center.removeObserver(token)
@@ -57,14 +78,18 @@ public final class LayoutAutomationEngine {
     }
 
     public func refreshNow() {
-        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        let activeContext = activeContextProvider()
         let currentSourceID = inputSourceClient.currentInputSourceID() ?? "Unknown"
-        let bundleID = frontmostApp?.bundleIdentifier ?? "Unknown"
-        let appName = frontmostApp?.localizedName ?? "Unknown"
-        rememberLastUsedInputSource(currentSourceID, forPreviousBundleBeforeActivating: bundleID)
+        let bundleID = activeContext.bundleID
+        let appName = activeContext.applicationName
+        let shouldRestoreLastUsedInputSource = rememberLastUsedInputSource(
+            currentSourceID,
+            forPreviousBundleBeforeActivating: bundleID
+        )
         rememberRecentApplication(applicationName: appName, bundleID: bundleID)
 
         guard store.configuration.automationEnabled else {
+            rememberCurrentInputSource(currentSourceID, for: bundleID)
             snapshot = AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -75,7 +100,8 @@ public final class LayoutAutomationEngine {
             return
         }
 
-        guard let rule = store.rule(for: bundleID) else {
+        guard let rule = store.effectiveRule(for: bundleID, applicationName: appName) else {
+            rememberCurrentInputSource(currentSourceID, for: bundleID)
             snapshot = AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -99,7 +125,8 @@ public final class LayoutAutomationEngine {
                 rule,
                 appName: appName,
                 bundleID: bundleID,
-                currentSourceID: currentSourceID
+                currentSourceID: currentSourceID,
+                shouldRestore: shouldRestoreLastUsedInputSource
             )
         }
     }
@@ -118,16 +145,30 @@ public final class LayoutAutomationEngine {
         return Array(updated.prefix(limit))
     }
 
-    private func rememberLastUsedInputSource(_ currentSourceID: String, forPreviousBundleBeforeActivating activeBundleID: String) {
+    @discardableResult
+    private func rememberLastUsedInputSource(
+        _ currentSourceID: String,
+        forPreviousBundleBeforeActivating activeBundleID: String
+    ) -> Bool {
+        let didActivateNewBundle = previousBundleID != nil && previousBundleID != activeBundleID
         defer { previousBundleID = activeBundleID == "Unknown" ? previousBundleID : activeBundleID }
 
         guard currentSourceID != "Unknown",
               let previousBundleID,
               previousBundleID != activeBundleID else {
-            return
+            return false
         }
 
         lastUsedInputSourceByBundleID[previousBundleID] = currentSourceID
+        return didActivateNewBundle
+    }
+
+    private func rememberCurrentInputSource(_ currentSourceID: String, for bundleID: String) {
+        guard currentSourceID != "Unknown", bundleID != "Unknown" else {
+            return
+        }
+
+        lastUsedInputSourceByBundleID[bundleID] = currentSourceID
     }
 
     private func rememberRecentApplication(applicationName: String, bundleID: String) {
@@ -192,10 +233,25 @@ public final class LayoutAutomationEngine {
         _ rule: ApplicationLayoutRule,
         appName: String,
         bundleID: String,
-        currentSourceID: String
+        currentSourceID: String,
+        shouldRestore: Bool
     ) {
         let description = "Matched \(rule.applicationName) -> Last Used"
+        guard shouldRestore else {
+            rememberCurrentInputSource(currentSourceID, for: bundleID)
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: description,
+                lastAction: "Remembered current layout"
+            )
+            lastErrorMessage = nil
+            return
+        }
+
         guard let targetSourceID = lastUsedInputSourceByBundleID[bundleID] else {
+            rememberCurrentInputSource(currentSourceID, for: bundleID)
             snapshot = AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -221,6 +277,7 @@ public final class LayoutAutomationEngine {
 
         do {
             try inputSourceClient.activateInputSource(withID: targetSourceID)
+            rememberCurrentInputSource(targetSourceID, for: bundleID)
             snapshot = AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,

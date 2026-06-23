@@ -6,4 +6,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdaterService.shared.start()
     }
 }
-

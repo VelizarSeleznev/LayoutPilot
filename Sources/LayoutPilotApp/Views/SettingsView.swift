@@ -37,6 +37,43 @@ struct SettingsView: View {
                     .padding(.leading, 16)
                 }
 
+                Section("Defaults for all apps") {
+                    Toggle("Auto-switch layout in every app", isOn: Binding(
+                        get: { appState.store.configuration.defaultAutoSwitchEnabled },
+                        set: { appState.store.setDefaultAutoSwitchEnabled($0) }
+                    ))
+
+                    if appState.store.configuration.defaultAutoSwitchEnabled {
+                        Picker("Default switches to", selection: Binding(
+                            get: { defaultAutoSwitchSelection },
+                            set: { setDefaultAutoSwitchSelection($0) }
+                        )) {
+                            Text("Last Used").tag("lastUsed")
+                            ForEach(appState.store.configuration.profiles) { profile in
+                                Text(profile.name).tag("profile:\(profile.id.uuidString)")
+                            }
+                        }
+                        .padding(.leading, 16)
+
+                        Text("Applies to apps without their own rule. Disable auto-switching on a specific app to opt it out.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 16)
+                    }
+
+                    Toggle("Smart RU/EN autocorrect in every app", isOn: Binding(
+                        get: { appState.store.configuration.smartBilingualApplyToAll },
+                        set: { appState.store.setSmartBilingualApplyToAll($0) }
+                    ))
+                    .disabled(!appState.store.configuration.smartBilingualEnabled)
+
+                    Toggle("Smart Danish input in every app", isOn: Binding(
+                        get: { appState.store.configuration.smartDanishApplyToAll },
+                        set: { appState.store.setSmartDanishApplyToAll($0) }
+                    ))
+                    .disabled(!appState.store.configuration.smartDanishInputEnabled)
+                }
+
                 Toggle("Launch at login", isOn: Binding(
                     get: { appState.store.configuration.launchAtLogin },
                     set: { appState.setLaunchAtLogin($0) }
@@ -64,28 +101,32 @@ struct SettingsView: View {
             .tabItem {
                 Label("General", systemImage: "gearshape")
             }
-
-            Form {
-                Toggle("LLM enabled", isOn: Binding(
-                    get: { appState.store.configuration.llm.isEnabled },
-                    set: { appState.store.setLLMEnabled($0) }
-                ))
-
-                TextField("Endpoint URL", text: Binding(
-                    get: { appState.store.configuration.llm.endpointURL },
-                    set: { appState.store.setLLMEndpointURL($0) }
-                ))
-
-                TextField("Model", text: Binding(
-                    get: { appState.store.configuration.llm.model },
-                    set: { appState.store.setLLMModel($0) }
-                ))
-            }
-            .tabItem {
-                Label("LLM", systemImage: "brain.head.profile")
-            }
         }
-        .frame(width: 520, height: 320)
+        .frame(width: 520, height: 440)
         .scenePadding()
+    }
+
+    private var defaultAutoSwitchSelection: String {
+        switch appState.store.configuration.defaultAutoSwitchTarget {
+        case .lastUsed:
+            return "lastUsed"
+        case .profile:
+            if let id = appState.store.configuration.defaultAutoSwitchProfileID {
+                return "profile:\(id.uuidString)"
+            }
+            return "lastUsed"
+        }
+    }
+
+    private func setDefaultAutoSwitchSelection(_ selection: String) {
+        if selection == "lastUsed" {
+            appState.store.setDefaultAutoSwitchTarget(.lastUsed)
+            return
+        }
+        if selection.hasPrefix("profile:"),
+           let id = UUID(uuidString: String(selection.dropFirst("profile:".count))) {
+            appState.store.setDefaultAutoSwitchProfileID(id)
+            appState.store.setDefaultAutoSwitchTarget(.profile)
+        }
     }
 }

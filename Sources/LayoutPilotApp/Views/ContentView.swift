@@ -48,10 +48,10 @@ struct ContentView: View {
             OverviewView(appState: appState)
         case .rules:
             RulesView(appState: appState)
-        case .translation:
-            TranslationSettingsView(appState: appState)
         case .profiles:
             ProfilesView(appState: appState)
+        case .chat:
+            ChatView()
         case .diagnostics:
             DiagnosticsView(appState: appState)
         }

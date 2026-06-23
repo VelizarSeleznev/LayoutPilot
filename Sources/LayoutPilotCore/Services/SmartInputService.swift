@@ -5,7 +5,11 @@ import Foundation
 
 public final class SmartInputService: @unchecked Sendable {
     public static let shared = SmartInputService()
-    
+
+    /// Invoked (on the tap thread) when the global Rewrite hotkey fires.
+    /// Set once at launch; the handler hops to the main actor itself.
+    public var onRewriteHotkey: (@Sendable () -> Void)?
+
     private let magicEventTag: Int64 = 0x44414E495348 // "DANISH"
     private let usInputSources = Set(["com.apple.keylayout.US", "com.apple.keylayout.ABC"])
     private let danishLanguage = "da"
@@ -63,7 +67,7 @@ public final class SmartInputService: @unchecked Sendable {
     
     final class ContextHistory {
         private var words: [String] = []
-        private let maxCount = 5
+        private let maxCount = 8
         
         func append(_ word: String) {
             words.append(word)
@@ -84,6 +88,7 @@ public final class SmartInputService: @unchecked Sendable {
     private let buffer = WordBuffer()
     let contextHistory = ContextHistory()
     private let checker = NSSpellChecker.shared
+    private let learningStore: SmartInputLearningStore
     
     private let lock = NSLock()
     private var _isEnabled = true
@@ -112,52 +117,31 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
-    private var _translationEnabled = true
-    private var _translationEndpointURL = "http://127.0.0.1:1234/v1"
-    private var _translationModel = "google/gemma-4-e4b"
-    private var _translationLanguages: [TranslationLanguage] = []
 
-    public var translationEnabled: Bool {
+    private var _smartBilingualApplyToAll = false
+    private var _danishApplyToAll = false
+
+    /// When true, smart RU/EN autocorrection runs in every app except `excludedBundleIDs`.
+    public var smartBilingualApplyToAll: Bool {
         get {
             lock.lock(); defer { lock.unlock() }
-            return _translationEnabled
+            return _smartBilingualApplyToAll
         }
         set {
             lock.lock(); defer { lock.unlock() }
-            _translationEnabled = newValue
+            _smartBilingualApplyToAll = newValue
         }
     }
 
-    public var translationEndpointURL: String {
+    /// When true, smart Danish input runs in every app except `excludedBundleIDs`.
+    public var danishApplyToAll: Bool {
         get {
             lock.lock(); defer { lock.unlock() }
-            return _translationEndpointURL
+            return _danishApplyToAll
         }
         set {
             lock.lock(); defer { lock.unlock() }
-            _translationEndpointURL = newValue
-        }
-    }
-
-    public var translationModel: String {
-        get {
-            lock.lock(); defer { lock.unlock() }
-            return _translationModel
-        }
-        set {
-            lock.lock(); defer { lock.unlock() }
-            _translationModel = newValue
-        }
-    }
-
-    public var translationLanguages: [TranslationLanguage] {
-        get {
-            lock.lock(); defer { lock.unlock() }
-            return _translationLanguages
-        }
-        set {
-            lock.lock(); defer { lock.unlock() }
-            _translationLanguages = newValue
+            _danishApplyToAll = newValue
         }
     }
 
@@ -186,7 +170,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
-    private var _smartBilingualUndoDelay = 0.5
+    private var _smartBilingualUndoDelay = 3.0
 
     public var smartBilingualUndoDelay: Double {
         get {
@@ -242,7 +226,13 @@ public final class SmartInputService: @unchecked Sendable {
     private var eventTap: CFMachPort?
     private var isStarted = false
     
-    public init() {}
+    public init() {
+        self.learningStore = .shared
+    }
+
+    init(learningStore: SmartInputLearningStore) {
+        self.learningStore = learningStore
+    }
     
     public func start() {
         guard !isStarted else { return }
@@ -250,6 +240,7 @@ public final class SmartInputService: @unchecked Sendable {
         
         requestAccessibilityPermissionIfNeeded()
         cacheLayouts()
+        learningStore.bootstrapFromEventLogIfNeeded()
         
         NotificationCenter.default.addObserver(
             forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
@@ -328,6 +319,16 @@ public final class SmartInputService: @unchecked Sendable {
             self.eventTap = tap
             let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(port, runLoopSource, .commonModes)
+            let spotlightTimer = CFRunLoopTimerCreateWithHandler(
+                kCFAllocatorDefault,
+                CFAbsoluteTimeGetCurrent() + 0.2,
+                0.2,
+                0,
+                0
+            ) { [weak self] _ in
+                self?.forceUSIfSpotlightIsActive()
+            }
+            CFRunLoopAddTimer(port, spotlightTimer, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
             
             CFRunLoopRun()
@@ -356,6 +357,26 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let flags = event.flags
+
+        if shouldForceUSForSpotlight(keyCode: keyCode, flags: flags) {
+            activatePreferredUSInputSource()
+            buffer.reset()
+            contextHistory.reset()
+            lastReplacement?.isActive = false
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Global Rewrite hotkey: Option+Shift+R (swallowed, handled in app layer).
+        if keyCode == 15 {
+            if flags.contains(.maskAlternate), flags.contains(.maskShift),
+               !flags.contains(.maskCommand), !flags.contains(.maskControl),
+               let handler = onRewriteHotkey {
+                handler()
+                return nil
+            }
+        }
+
         if keyCode == 51 { // Backspace / Delete
             if let last = lastReplacement, last.isActive {
                 let elapsed = Date().timeIntervalSince(last.timestamp)
@@ -364,10 +385,18 @@ public final class SmartInputService: @unchecked Sendable {
                     return nil // Swallow event!
                 } else {
                     lastReplacement?.isActive = false
+                    learningStore.recordRejectedConversion(
+                        mode: last.mode,
+                        original: last.original,
+                        replacement: last.replacement,
+                        sourceLayoutID: last.originalLayoutID,
+                        targetLayoutID: last.targetLayoutID,
+                        bundleID: last.bundleID
+                    )
                     SmartInputEventLog.shared.record(.init(
                         kind: "backspace_after_replacement_window",
                         mode: last.mode,
-                        reason: "undo window expired",
+                        reason: "next input was backspace after undo window; learned rejected conversion",
                         bundleID: last.bundleID,
                         sourceLayoutID: last.originalLayoutID,
                         targetLayoutID: last.targetLayoutID,
@@ -377,7 +406,8 @@ public final class SmartInputService: @unchecked Sendable {
                         keyCode: keyCode,
                         bufferBefore: buffer.token,
                         elapsedSinceReplacement: elapsed,
-                        replacementAgeLimit: _smartBilingualUndoDelay
+                        replacementAgeLimit: _smartBilingualUndoDelay,
+                        suppressionReason: "learned_user_rejection"
                     ))
                 }
             }
@@ -404,27 +434,6 @@ public final class SmartInputService: @unchecked Sendable {
             lastReplacement?.isActive = false
         }
 
-        // Intercept global translation shortcuts
-        if translationEnabled {
-            let flags = event.flags
-            let hasOption = flags.contains(.maskAlternate)
-            let hasShift = flags.contains(.maskShift)
-            let hasCommand = flags.contains(.maskCommand)
-            let hasControl = flags.contains(.maskControl)
-            
-            if hasOption && hasShift && !hasCommand && !hasControl {
-                let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
-                if let match = translationLanguages.first(where: { $0.isEnabled && $0.keyCode == keyCode }) {
-                    TranslationService.shared.translateSelectedText(
-                        to: match.name,
-                        endpointURL: translationEndpointURL,
-                        model: translationModel
-                    )
-                    return nil // Swallow event!
-                }
-            }
-        }
-
         guard isEnabled else {
             buffer.reset()
             contextHistory.reset()
@@ -437,7 +446,6 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         
-        let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
             buffer.reset()
             contextHistory.reset()
@@ -450,9 +458,9 @@ public final class SmartInputService: @unchecked Sendable {
         
         if isBoundary(text) {
             let activeBundleID = frontmostBundleID() ?? ""
-            let isDanishAllowed = allowedBundleIDs.contains(activeBundleID)
-            let isBilingualAllowed = smartBilingualAllowedBundleIDs.contains(activeBundleID)
-            
+            let isDanishAllowed = isDanishAllowed(for: activeBundleID)
+            let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
+
             if isDanishAllowed,
                let sourceID = currentInputSourceID(),
                usInputSources.contains(sourceID),
@@ -467,16 +475,22 @@ public final class SmartInputService: @unchecked Sendable {
                     boundary: text,
                     bundleID: activeBundleID,
                     originalLayoutID: sourceID,
-                    targetLayoutID: nil
+                    targetLayoutID: nil,
+                    contextBefore: contextHistory.getWords()
                 )
                 return nil
             }
             
             if smartBilingualEnabled,
                isBilingualAllowed,
-               let bilingualResult = checkBilingualConversion(for: buffer.token) {
+               let bilingualResult = checkBilingualConversion(
+                   for: buffer.token,
+                   bundleID: activeBundleID,
+                   logSuppression: true
+               ) {
                 let originalLayoutID = currentInputSourceID()
                 let originalToken = buffer.token
+                let contextBefore = contextHistory.getWords()
                 
                 let (_, russianLayoutID) = findLayouts()
                 let isToRussian = (bilingualResult.targetLayoutID == russianLayoutID)
@@ -497,7 +511,8 @@ public final class SmartInputService: @unchecked Sendable {
                     boundary: convertedBoundary,
                     bundleID: activeBundleID,
                     originalLayoutID: originalLayoutID,
-                    targetLayoutID: bilingualResult.targetLayoutID
+                    targetLayoutID: bilingualResult.targetLayoutID,
+                    contextBefore: contextBefore
                 )
                 
                 contextHistory.append(bilingualResult.replacement)
@@ -513,7 +528,11 @@ public final class SmartInputService: @unchecked Sendable {
             }
             
             if !buffer.token.isEmpty {
-                contextHistory.append(buffer.token)
+                recordAcceptedTypedWord(
+                    buffer.token,
+                    layoutID: currentInputSourceID(),
+                    bundleID: activeBundleID
+                )
             }
             buffer.reset()
             return Unmanaged.passUnretained(event)
@@ -523,8 +542,8 @@ public final class SmartInputService: @unchecked Sendable {
             buffer.append(text)
             
             let activeBundleID = frontmostBundleID() ?? ""
-            let isDanishAllowed = allowedBundleIDs.contains(activeBundleID)
-            
+            let isDanishAllowed = isDanishAllowed(for: activeBundleID)
+
             if isDanishAllowed,
                let sourceID = currentInputSourceID(),
                usInputSources.contains(sourceID),
@@ -540,7 +559,8 @@ public final class SmartInputService: @unchecked Sendable {
                     boundary: "",
                     bundleID: activeBundleID,
                     originalLayoutID: sourceID,
-                    targetLayoutID: nil
+                    targetLayoutID: nil,
+                    contextBefore: contextHistory.getWords()
                 )
                 return nil
             }
@@ -549,6 +569,45 @@ public final class SmartInputService: @unchecked Sendable {
         
         buffer.reset()
         return Unmanaged.passUnretained(event)
+    }
+
+    private func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        let isSpotlightShortcut = keyCode == 49 &&
+            flags.contains(.maskCommand) &&
+            !flags.contains(.maskAlternate) &&
+            !flags.contains(.maskControl)
+
+        if isSpotlightShortcut {
+            return true
+        }
+
+        return SystemApplicationContexts.activeContext(
+            frontmostApplication: NSWorkspace.shared.frontmostApplication
+        ).bundleID == SystemApplicationContexts.spotlight.bundleID
+    }
+
+    private func activatePreferredUSInputSource() {
+        guard let currentSourceID = currentInputSourceID(),
+              !usInputSources.contains(currentSourceID) else {
+            return
+        }
+
+        let client = SystemInputSourceClient()
+        if (try? client.activateInputSource(withID: "com.apple.keylayout.US")) != nil {
+            return
+        }
+        try? client.activateInputSource(withID: "com.apple.keylayout.ABC")
+    }
+
+    private func forceUSIfSpotlightIsActive() {
+        let activeContext = SystemApplicationContexts.activeContext(
+            frontmostApplication: NSWorkspace.shared.frontmostApplication
+        )
+        guard activeContext.bundleID == SystemApplicationContexts.spotlight.bundleID else {
+            return
+        }
+
+        activatePreferredUSInputSource()
     }
     
     private func currentInputSourceID() -> String? {
@@ -594,7 +653,19 @@ public final class SmartInputService: @unchecked Sendable {
         if excludedBundleIDs.contains(bundleID) {
             return false
         }
-        return allowedBundleIDs.contains(bundleID) || smartBilingualAllowedBundleIDs.contains(bundleID)
+        return isDanishAllowed(for: bundleID) || isBilingualAllowed(for: bundleID)
+    }
+
+    /// Smart Danish input applies when globally allowed for all apps, or this app is allow-listed.
+    private func isDanishAllowed(for bundleID: String) -> Bool {
+        if excludedBundleIDs.contains(bundleID) { return false }
+        return danishApplyToAll || allowedBundleIDs.contains(bundleID)
+    }
+
+    /// Smart RU/EN autocorrection applies when globally allowed for all apps, or this app is allow-listed.
+    private func isBilingualAllowed(for bundleID: String) -> Bool {
+        if excludedBundleIDs.contains(bundleID) { return false }
+        return smartBilingualApplyToAll || smartBilingualAllowedBundleIDs.contains(bundleID)
     }
     
     private func eventText(_ event: CGEvent) -> String? {
@@ -863,15 +934,91 @@ public final class SmartInputService: @unchecked Sendable {
     public func checkBilingualConversion(for token: String) -> BilingualResult? {
         guard !token.isEmpty else { return nil }
         guard let sourceID = currentInputSourceID() else { return nil }
-        
-        let isUS = usInputSources.contains(sourceID)
-        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") || 
-                        sourceID.hasSuffix(".ru") || 
-                        sourceID.contains(".ru.") || 
-                        sourceID == "ru"
+        return checkBilingualConversion(
+            for: token,
+            sourceLayoutID: sourceID,
+            contextWords: contextHistory.getWords(),
+            bundleID: nil,
+            logSuppression: false
+        )
+    }
+
+    func checkBilingualConversion(
+        for token: String,
+        sourceLayoutID: String,
+        contextWords: [String] = [],
+        bundleID: String? = nil,
+        logSuppression: Bool = false
+    ) -> BilingualResult? {
+        guard let candidate = bilingualCandidate(
+            for: token,
+            sourceLayoutID: sourceLayoutID,
+            contextWords: contextWords
+        ) else {
+            return nil
+        }
+
+        if let suppressionReason = learningStore.suppressionReason(
+            mode: "bilingual",
+            original: token,
+            replacement: candidate.replacement,
+            sourceLayoutID: sourceLayoutID,
+            targetLayoutID: candidate.targetLayoutID
+        ) {
+            if logSuppression {
+                SmartInputEventLog.shared.record(.init(
+                    kind: "conversion_suppressed",
+                    mode: "bilingual",
+                    reason: "learned conversion should not be applied",
+                    bundleID: bundleID,
+                    sourceLayoutID: sourceLayoutID,
+                    targetLayoutID: candidate.targetLayoutID,
+                    original: token,
+                    replacement: candidate.replacement,
+                    contextBefore: contextWords,
+                    suppressionReason: suppressionReason
+                ))
+            }
+            return nil
+        }
+
+        return candidate
+    }
+
+    private func checkBilingualConversion(
+        for token: String,
+        bundleID: String?,
+        logSuppression: Bool
+    ) -> BilingualResult? {
+        guard !token.isEmpty else { return nil }
+        guard let sourceID = currentInputSourceID() else { return nil }
+        return checkBilingualConversion(
+            for: token,
+            sourceLayoutID: sourceID,
+            contextWords: contextHistory.getWords(),
+            bundleID: bundleID,
+            logSuppression: logSuppression
+        )
+    }
+
+    private func bilingualCandidate(
+        for token: String,
+        sourceLayoutID: String,
+        contextWords: [String]
+    ) -> BilingualResult? {
+        let isUS = usInputSources.contains(sourceLayoutID)
+        let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
+                        sourceLayoutID.hasSuffix(".ru") ||
+                        sourceLayoutID.contains(".ru.") ||
+                        sourceLayoutID == "ru"
         
         if token.count == 1 {
-            return nil
+            return contextualSingleCharacterConversion(
+                for: token,
+                isUS: isUS,
+                isRussian: isRussian,
+                contextWords: contextWords
+            )
         }
 
         if token.count < 3 {
@@ -946,6 +1093,79 @@ public final class SmartInputService: @unchecked Sendable {
         return nil
     }
 
+    private func contextualSingleCharacterConversion(
+        for token: String,
+        isUS: Bool,
+        isRussian: Bool,
+        contextWords: [String]
+    ) -> BilingualResult? {
+        if isUS {
+            guard isLatinWord(token), !isValidEnglishWord(token) else { return nil }
+            let translated = translateEnglishToRussian(token)
+            guard translated != token,
+                  isCyrillicWord(translated),
+                  commonRussianShortWords.contains(translated.lowercased()),
+                  contextStronglySuggests(.russian, in: contextWords) else {
+                return nil
+            }
+            let (_, russianLayoutID) = findLayouts()
+            return BilingualResult(replacement: translated, targetLayoutID: russianLayoutID)
+        }
+
+        if isRussian {
+            guard isCyrillicWord(token), !isValidRussianWord(token) else { return nil }
+            let translated = translateRussianToEnglish(token)
+            guard translated != token,
+                  isLatinWord(translated),
+                  commonEnglishShortWords.contains(translated.lowercased()),
+                  contextStronglySuggests(.english, in: contextWords) else {
+                return nil
+            }
+            let (englishLayoutID, _) = findLayouts()
+            return BilingualResult(replacement: translated, targetLayoutID: englishLayoutID)
+        }
+
+        return nil
+    }
+
+    private func contextStronglySuggests(_ language: WordLanguage, in words: [String]) -> Bool {
+        var targetCount = 0
+        var opposingCount = 0
+
+        for word in words.suffix(8) {
+            let detected = detectLanguage(of: word)
+            if detected == language {
+                targetCount += 1
+            } else if detected != .unknown {
+                opposingCount += 1
+            }
+        }
+
+        return targetCount >= 2 && targetCount >= opposingCount + 1
+    }
+
+    private func recordAcceptedTypedWord(_ word: String, layoutID: String?, bundleID: String?) {
+        contextHistory.append(word)
+
+        let outcome = learningStore.recordAcceptedWord(
+            word,
+            layoutID: layoutID,
+            bundleID: bundleID
+        )
+        if outcome.wasPromoted {
+            SmartInputEventLog.shared.record(.init(
+                kind: "accepted_word_promoted",
+                mode: "bilingual",
+                reason: "word was typed repeatedly without conversion",
+                bundleID: bundleID,
+                sourceLayoutID: layoutID,
+                original: word,
+                contextBefore: contextHistory.getWords(),
+                learnedWordCount: outcome.count
+            ))
+        }
+    }
+
     private func recordReplacementForUndo(
         mode: String,
         reason: String,
@@ -954,7 +1174,8 @@ public final class SmartInputService: @unchecked Sendable {
         boundary: String,
         bundleID: String?,
         originalLayoutID: String?,
-        targetLayoutID: String?
+        targetLayoutID: String?,
+        contextBefore: [String]
     ) {
         lastReplacement = LastReplacementInfo(
             mode: mode,
@@ -979,12 +1200,21 @@ public final class SmartInputService: @unchecked Sendable {
             original: original,
             replacement: replacement,
             boundary: boundary,
-            replacementAgeLimit: _smartBilingualUndoDelay
+            replacementAgeLimit: _smartBilingualUndoDelay,
+            contextBefore: contextBefore
         ))
     }
 
     private func performReplacementUndo(_ last: LastReplacementInfo, elapsed: Double, keyCode: Int64) {
         lastReplacement?.isActive = false
+        learningStore.recordRejectedConversion(
+            mode: last.mode,
+            original: last.original,
+            replacement: last.replacement,
+            sourceLayoutID: last.originalLayoutID,
+            targetLayoutID: last.targetLayoutID,
+            bundleID: last.bundleID
+        )
         
         let charsToDeleteCount = last.replacement.count + last.boundary.count
         for _ in 0..<charsToDeleteCount {
@@ -1014,7 +1244,8 @@ public final class SmartInputService: @unchecked Sendable {
             keyCode: keyCode,
             bufferAfter: buffer.token,
             elapsedSinceReplacement: elapsed,
-            replacementAgeLimit: _smartBilingualUndoDelay
+            replacementAgeLimit: _smartBilingualUndoDelay,
+            suppressionReason: "learned_user_rejection"
         ))
     }
 

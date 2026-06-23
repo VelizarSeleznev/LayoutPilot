@@ -48,7 +48,7 @@ public final class SmartInputEventLog: @unchecked Sendable {
                 try line.write(to: url, options: [.atomic])
             }
 
-            logger.info("Smart input event: \(event.kind, privacy: .public) mode=\(event.mode ?? "none", privacy: .public) app=\(event.bundleID ?? "unknown", privacy: .public)")
+            logger.info("Smart input event: \(event.summary ?? event.kind, privacy: .public)")
         } catch {
             logger.error("Failed to write smart input event: \(error.localizedDescription, privacy: .public)")
         }
@@ -83,6 +83,10 @@ public final class SmartInputEventLog: @unchecked Sendable {
         public var bufferAfter: String?
         public var elapsedSinceReplacement: Double?
         public var replacementAgeLimit: Double?
+        public var contextBefore: [String]?
+        public var suppressionReason: String?
+        public var learnedWordCount: Int?
+        public var summary: String?
 
         public init(
             timestamp: Date = Date(),
@@ -99,7 +103,11 @@ public final class SmartInputEventLog: @unchecked Sendable {
             bufferBefore: String? = nil,
             bufferAfter: String? = nil,
             elapsedSinceReplacement: Double? = nil,
-            replacementAgeLimit: Double? = nil
+            replacementAgeLimit: Double? = nil,
+            contextBefore: [String]? = nil,
+            suppressionReason: String? = nil,
+            learnedWordCount: Int? = nil,
+            summary: String? = nil
         ) {
             self.timestamp = timestamp
             self.kind = kind
@@ -116,6 +124,72 @@ public final class SmartInputEventLog: @unchecked Sendable {
             self.bufferAfter = bufferAfter
             self.elapsedSinceReplacement = elapsedSinceReplacement
             self.replacementAgeLimit = replacementAgeLimit
+            self.contextBefore = contextBefore
+            self.suppressionReason = suppressionReason
+            self.learnedWordCount = learnedWordCount
+            self.summary = summary ?? Self.makeSummary(
+                kind: kind,
+                mode: mode,
+                reason: reason,
+                bundleID: bundleID,
+                sourceLayoutID: sourceLayoutID,
+                targetLayoutID: targetLayoutID,
+                original: original,
+                replacement: replacement,
+                boundary: boundary,
+                elapsedSinceReplacement: elapsedSinceReplacement,
+                replacementAgeLimit: replacementAgeLimit,
+                suppressionReason: suppressionReason,
+                learnedWordCount: learnedWordCount
+            )
+        }
+
+        private static func makeSummary(
+            kind: String,
+            mode: String?,
+            reason: String?,
+            bundleID: String?,
+            sourceLayoutID: String?,
+            targetLayoutID: String?,
+            original: String?,
+            replacement: String?,
+            boundary: String?,
+            elapsedSinceReplacement: Double?,
+            replacementAgeLimit: Double?,
+            suppressionReason: String?,
+            learnedWordCount: Int?
+        ) -> String {
+            var parts = [kind]
+            if let mode { parts.append("mode=\(mode)") }
+            if let bundleID { parts.append("app=\(bundleID)") }
+            if let sourceLayoutID { parts.append("source=\(sourceLayoutID)") }
+            if let targetLayoutID { parts.append("target=\(targetLayoutID)") }
+            if let original, let replacement {
+                parts.append("'\(original)' -> '\(replacement)'")
+            } else if let original {
+                parts.append("word='\(original)'")
+            }
+            if let boundary, !boundary.isEmpty {
+                parts.append("boundary='\(boundary)'")
+            }
+            if let suppressionReason {
+                parts.append("suppressed=\(suppressionReason)")
+            }
+            if let learnedWordCount {
+                parts.append("learnedCount=\(learnedWordCount)")
+            }
+            if let elapsedSinceReplacement {
+                let formatted = String(format: "%.2fs", elapsedSinceReplacement)
+                parts.append("elapsed=\(formatted)")
+            }
+            if let replacementAgeLimit {
+                let formatted = String(format: "%.2fs", replacementAgeLimit)
+                parts.append("undoLimit=\(formatted)")
+            }
+            if let reason {
+                parts.append("reason=\(reason)")
+            }
+            return parts.joined(separator: " | ")
         }
     }
 }

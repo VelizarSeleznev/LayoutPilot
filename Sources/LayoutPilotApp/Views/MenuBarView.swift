@@ -1,8 +1,11 @@
+import AppKit
 import SwiftUI
 import LayoutPilotCore
 
 struct MenuBarView: View {
     @Bindable var appState: LayoutPilotAppState
+    @Bindable private var inspector = FocusInspectorController.shared
+    @Bindable private var selectionInspector = SelectionInspectorController.shared
     @Environment(\.openWindow) private var openWindow
 
     private var activeApplication: RecentApplicationContext {
@@ -12,195 +15,124 @@ struct MenuBarView: View {
         )
     }
 
-    private var olderRecentApplications: [RecentApplicationContext] {
-        appState.engine.recentApplications.filter { $0.bundleID != activeApplication.bundleID }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            activeApplicationPanel
+        VStack(alignment: .leading, spacing: 10) {
+            activeApplicationHeader
+            activeApplicationControls
 
-            if !olderRecentApplications.isEmpty {
-                recentApplicationsPanel
-            }
+            Divider()
 
-            globalControlsPanel
-            footerActions
-        }
-        .padding(12)
-        .frame(width: 390)
-        .background(
-            ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.24),
-                        Color.accentColor.opacity(0.08),
-                        Color.black.opacity(0.04)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-        )
-    }
-
-    private var activeApplicationPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                AppIconView(bundleID: activeApplication.bundleID, size: 38)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(displayName(for: activeApplication.applicationName))
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(activeApplication.bundleID)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-            }
-
-            applicationControls(for: activeApplication, isProminent: true)
-        }
-        .glassLikePanel(cornerRadius: 20)
-    }
-
-    private var recentApplicationsPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Recent", systemImage: "clock")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            ForEach(olderRecentApplications) { application in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        AppIconView(bundleID: application.bundleID, size: 24)
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(displayName(for: application.applicationName))
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            Text(application.bundleID)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-                    }
-
-                    applicationControls(for: application, isProminent: false)
-                }
-                .padding(10)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                )
-            }
-        }
-        .glassLikePanel(cornerRadius: 18)
-    }
-
-    private var globalControlsPanel: some View {
-        VStack(spacing: 8) {
-            Toggle("Global Auto-Switching", isOn: Binding(
+            Toggle("Auto-switching", isOn: Binding(
                 get: { appState.store.configuration.automationEnabled },
                 set: { appState.store.setAutomationEnabled($0) }
             ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
 
-            Toggle("Global Smart RU/EN", isOn: Binding(
-                get: { appState.store.configuration.smartBilingualEnabled },
-                set: { appState.store.setSmartBilingualEnabled($0) }
+            Toggle("AX Inspector", isOn: Binding(
+                get: { inspector.isVisible },
+                set: { _ in inspector.toggle() }
             ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
 
-            Toggle("Global Smart Danish", isOn: Binding(
-                get: { appState.store.configuration.smartDanishInputEnabled },
-                set: { appState.store.setSmartDanishInputEnabled($0) }
+            Toggle("Selection Inspector", isOn: Binding(
+                get: { selectionInspector.isVisible },
+                set: { _ in selectionInspector.toggle() }
             ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            Divider()
+
+            footerActions
         }
-        .toggleStyle(.switch)
-        .controlSize(.small)
-        .glassLikePanel(cornerRadius: 16)
+        .padding(12)
+        .frame(width: 280)
+    }
+
+    private var activeApplicationHeader: some View {
+        HStack(spacing: 10) {
+            AppIconView(bundleID: activeApplication.bundleID, size: 32)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(displayName(for: activeApplication.applicationName))
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(statusText(for: activeApplication))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var activeApplicationControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Layout", selection: Binding(
+                get: { autoSwitchSelection(for: activeApplication) },
+                set: { setAutoSwitchSelection($0, for: activeApplication) }
+            )) {
+                Text("None").tag("none")
+                Text("Last Used").tag("lastUsed")
+                ForEach(appState.store.configuration.profiles) { profile in
+                    Text(profile.name).tag("profile:\(profile.id.uuidString)")
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+
+            HStack(spacing: 16) {
+                Toggle("RU/EN", isOn: Binding(
+                    get: { isSmartBilingualEnabled(for: activeApplication) },
+                    set: { setSmartBilingualEnabled($0, for: activeApplication) }
+                ))
+
+                Toggle("Danish", isOn: Binding(
+                    get: { isSmartInputEnabled(for: activeApplication) },
+                    set: { setSmartInputEnabled($0, for: activeApplication) }
+                ))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+        }
     }
 
     private var footerActions: some View {
         HStack(spacing: 8) {
             Button {
+                NSLog("[Menu] Dashboard tapped")
+                NSApp.activate(ignoringOtherApps: true)
                 openWindow(id: "main")
+                NSLog("[Menu] Dashboard openWindow called")
             } label: {
                 Label("Dashboard", systemImage: "rectangle.stack")
             }
-            .buttonStyle(.borderedProminent)
 
             Spacer()
 
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
-                Label("Quit", systemImage: "power")
+                Text("Quit")
             }
-            .buttonStyle(.bordered)
         }
         .controlSize(.small)
     }
 
-    private func applicationControls(for application: RecentApplicationContext, isProminent: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Picker("Auto-Switch", selection: Binding(
-                    get: { autoSwitchSelection(for: application) },
-                    set: { setAutoSwitchSelection($0, for: application) }
-                )) {
-                    Text("None").tag("none")
-                    Text("Last Used").tag("lastUsed")
-                    ForEach(appState.store.configuration.profiles) { profile in
-                        Text(profile.name).tag("profile:\(profile.id.uuidString)")
-                    }
-                }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-
-                Spacer()
-
-                statusBadge(for: application)
-            }
-
-            HStack(spacing: 14) {
-                Toggle("RU/EN", isOn: Binding(
-                    get: { isSmartBilingualEnabled(for: application) },
-                    set: { setSmartBilingualEnabled($0, for: application) }
-                ))
-
-                Toggle("Danish", isOn: Binding(
-                    get: { isSmartInputEnabled(for: application) },
-                    set: { setSmartInputEnabled($0, for: application) }
-                ))
-            }
-            .toggleStyle(.switch)
-            .controlSize(isProminent ? .regular : .small)
+    private func statusText(for application: RecentApplicationContext) -> String {
+        guard appState.store.configuration.automationEnabled else {
+            return "Auto-switching off"
         }
-    }
-
-    private func statusBadge(for application: RecentApplicationContext) -> some View {
-        let targetName = isAutoSwitchActive(for: application)
-            ? autoSwitchTargetName(for: applicationRule(for: application))
-            : "Manual"
-
-        return Text(targetName)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.thinMaterial, in: Capsule())
+        if isAutoSwitchActive(for: application) {
+            return "Auto: \(autoSwitchTargetName(for: applicationRule(for: application)))"
+        }
+        if appState.store.configuration.defaultAutoSwitchEnabled {
+            return "Default: \(defaultTargetName())"
+        }
+        return "Manual"
     }
 
     private func applicationRule(for application: RecentApplicationContext) -> ApplicationLayoutRule? {
@@ -283,6 +215,16 @@ struct MenuBarView: View {
         }
     }
 
+    private func defaultTargetName() -> String {
+        switch appState.store.configuration.defaultAutoSwitchTarget {
+        case .lastUsed:
+            return "Last Used"
+        case .profile:
+            let id = appState.store.configuration.defaultAutoSwitchProfileID
+            return appState.store.configuration.profiles.first { $0.id == id }?.name ?? "Last Used"
+        }
+    }
+
     private func removeAutoSwitch(for application: RecentApplicationContext) {
         guard let rule = applicationRule(for: application) else {
             return
@@ -319,29 +261,5 @@ struct MenuBarView: View {
         }
 
         return String(applicationName.prefix(maximumLength - 3)) + "..."
-    }
-}
-
-private extension View {
-    func glassLikePanel(cornerRadius: CGFloat) -> some View {
-        padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.42),
-                                Color.white.opacity(0.12),
-                                Color.black.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 18, y: 10)
-            .shadow(color: Color.white.opacity(0.12), radius: 1, y: -1)
     }
 }

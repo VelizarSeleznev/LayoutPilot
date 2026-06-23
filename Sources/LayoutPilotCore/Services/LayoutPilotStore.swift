@@ -40,17 +40,49 @@ public final class LayoutPilotStore {
     }
 
     public func rule(for bundleID: String) -> ApplicationLayoutRule? {
+        matchedRule(for: bundleID, requireEnabled: true)
+    }
+
+    /// Returns the first rule whose bundle ID matches, optionally ignoring disabled rules.
+    public func matchedRule(for bundleID: String, requireEnabled: Bool) -> ApplicationLayoutRule? {
         configuration.rules.first { rule in
-            guard rule.isEnabled else { return false }
+            if requireEnabled && !rule.isEnabled { return false }
             if rule.applicationBundleID == bundleID { return true }
             // Support matching Wine/CrossOver dynamic bundle IDs or sub-apps
-            if bundleID.hasPrefix(rule.applicationBundleID) || 
+            if bundleID.hasPrefix(rule.applicationBundleID) ||
                (rule.applicationBundleID.lowercased() == "crossover" && bundleID.localizedCaseInsensitiveContains("crossover")) ||
                (rule.applicationBundleID.lowercased() == "wine" && bundleID.localizedCaseInsensitiveContains("wine")) {
                 return true
             }
             return false
         }
+    }
+
+    /// Resolves the rule that should drive automation for an app, applying the global
+    /// "default for all apps" fallback when no explicit rule is configured.
+    ///
+    /// An explicit but disabled rule wins over the default, so users can opt a single
+    /// app out of the global default.
+    public func effectiveRule(for bundleID: String, applicationName: String) -> ApplicationLayoutRule? {
+        if let rule = matchedRule(for: bundleID, requireEnabled: true) {
+            return rule
+        }
+        if matchedRule(for: bundleID, requireEnabled: false) != nil {
+            return nil
+        }
+        guard configuration.defaultAutoSwitchEnabled else {
+            return nil
+        }
+        let profileID = configuration.defaultAutoSwitchProfileID
+            ?? configuration.profiles.first?.id
+            ?? UUID()
+        return ApplicationLayoutRule(
+            applicationBundleID: bundleID,
+            applicationName: applicationName,
+            profileID: profileID,
+            target: configuration.defaultAutoSwitchTarget,
+            isEnabled: true
+        )
     }
 
     public func profile(for id: UUID) -> InputLayoutProfile? {
@@ -177,35 +209,36 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
-    public func setLLMEnabled(_ value: Bool) {
+    public func setDefaultAutoSwitchEnabled(_ value: Bool) {
         var updated = configuration
-        updated.llm.isEnabled = value
+        updated.defaultAutoSwitchEnabled = value
         configuration = updated
     }
 
-    public func setLLMEndpointURL(_ value: String) {
+    public func setDefaultAutoSwitchTarget(_ value: ApplicationLayoutRuleTarget) {
         var updated = configuration
-        updated.llm.endpointURL = value
+        updated.defaultAutoSwitchTarget = value
         configuration = updated
     }
 
-    public func setLLMModel(_ value: String) {
+    public func setDefaultAutoSwitchProfileID(_ value: UUID?) {
         var updated = configuration
-        updated.llm.model = value
+        updated.defaultAutoSwitchProfileID = value
         configuration = updated
     }
 
-    public func setTranslationEnabled(_ value: Bool) {
+    public func setSmartBilingualApplyToAll(_ value: Bool) {
         var updated = configuration
-        updated.llm.translationEnabled = value
+        updated.smartBilingualApplyToAll = value
         configuration = updated
     }
 
-    public func setTranslationLanguages(_ value: [TranslationLanguage]) {
+    public func setSmartDanishApplyToAll(_ value: Bool) {
         var updated = configuration
-        updated.llm.translationLanguages = value
+        updated.smartDanishApplyToAll = value
         configuration = updated
     }
+
 
     public func resetToDefaultConfiguration() {
         configuration = .default()
@@ -236,8 +269,57 @@ public final class LayoutPilotStore {
 
     private static func normalizedConfiguration(_ configuration: LayoutPilotConfiguration) -> LayoutPilotConfiguration {
         var configuration = configuration
+        if matchedRule(in: configuration.rules, for: SystemApplicationContexts.spotlight.bundleID) == nil,
+           let usProfile = defaultUSProfile(in: configuration.profiles) {
+            configuration.rules.insert(
+                ApplicationLayoutRule(
+                    applicationBundleID: SystemApplicationContexts.spotlight.bundleID,
+                    applicationName: SystemApplicationContexts.spotlight.applicationName,
+                    profileID: usProfile.id
+                ),
+                at: 0
+            )
+        }
+        if configuration.defaultAutoSwitchTarget == .lastUsed {
+            configuration.rules = configuration.rules.map { rule in
+                guard rule.applicationBundleID == SystemApplicationContexts.spotlight.bundleID,
+                      rule.target == .profile,
+                      let profile = configuration.profiles.first(where: { $0.id == rule.profileID }),
+                      isUSProfile(profile) else {
+                    return rule
+                }
+
+                var updatedRule = rule
+                updatedRule.target = .lastUsed
+                return updatedRule
+            }
+        }
         configuration.rules = deduplicatedRules(configuration.rules)
         return configuration
+    }
+
+    private static func defaultUSProfile(in profiles: [InputLayoutProfile]) -> InputLayoutProfile? {
+        profiles.first(where: isUSProfile) ?? profiles.first { profile in
+            profile.name.localizedCaseInsensitiveContains("u.s.") ||
+                profile.name.localizedCaseInsensitiveContains("us")
+        }
+    }
+
+    private static func isUSProfile(_ profile: InputLayoutProfile) -> Bool {
+        profile.inputSourceID == "com.apple.keylayout.US" ||
+            profile.inputSourceID == "com.apple.keylayout.ABC"
+    }
+
+    private static func matchedRule(in rules: [ApplicationLayoutRule], for bundleID: String) -> ApplicationLayoutRule? {
+        rules.first { rule in
+            if rule.applicationBundleID == bundleID { return true }
+            if bundleID.hasPrefix(rule.applicationBundleID) ||
+               (rule.applicationBundleID.lowercased() == "crossover" && bundleID.localizedCaseInsensitiveContains("crossover")) ||
+               (rule.applicationBundleID.lowercased() == "wine" && bundleID.localizedCaseInsensitiveContains("wine")) {
+                return true
+            }
+            return false
+        }
     }
 
     private static func deduplicatedRules(_ rules: [ApplicationLayoutRule]) -> [ApplicationLayoutRule] {

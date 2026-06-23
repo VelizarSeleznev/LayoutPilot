@@ -4,13 +4,8 @@ import AppKit
 
 struct OverviewView: View {
     @Bindable var appState: LayoutPilotAppState
-    @State private var pulseIndicator = false
-    @State private var connectionTimer: Timer? = nil
-    
-    // Live LLM State
-    @State private var llmOnline = false
-    @State private var llmStatusText = "Checking..."
-    
+
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -37,9 +32,6 @@ struct OverviewView: View {
 
                 // Interactive Live Flow Bridge
                 liveFlowCard
-
-                // Dynamic Offline LLM Card
-                llmCockpitCard
 
                 // Quick Toggle Settings
                 VStack(spacing: 16) {
@@ -86,22 +78,7 @@ struct OverviewView: View {
             }
             .padding(.trailing, 4)
         }
-        .onAppear {
-            checkLLMConnection()
-            
-            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                pulseIndicator = true
-            }
-            
-            // Check connection every 5.0 seconds
-            connectionTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-                checkLLMConnection()
-            }
-        }
-        .onDisappear {
-            connectionTimer?.invalidate()
-            connectionTimer = nil
-        }
+
     }
 
     // Engine Status
@@ -111,10 +88,7 @@ struct OverviewView: View {
                 // Pulsing Active Dot
                 Circle()
                     .fill(appState.store.configuration.automationEnabled ? Color.green : Color.secondary)
-                    .frame(width: 10, height: 10)
-                    .scaleEffect(pulseIndicator && appState.store.configuration.automationEnabled ? 1.3 : 1.0)
-                    .opacity(pulseIndicator && appState.store.configuration.automationEnabled ? 0.7 : 1.0)
-                    .animation(appState.store.configuration.automationEnabled ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default, value: pulseIndicator)
+                    .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(appState.store.configuration.automationEnabled ? "Layout Switching Active" : "Layout Switching Suspended")
@@ -318,82 +292,6 @@ struct OverviewView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    // Dynamic Offline LLM Card
-    private var llmCockpitCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "cpu")
-                    .font(.title2)
-                    .foregroundColor(llmOnline ? .green : .secondary)
-                    .padding(8)
-                    .background(llmOnline ? Color.green.opacity(0.1) : Color.primary.opacity(0.05))
-                    .clipShape(Circle())
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text("Local Translation Server")
-                            .font(.headline)
-                        
-                        Circle()
-                            .fill(llmOnline ? Color.green : Color.red)
-                            .frame(width: 8, height: 8)
-                    }
-                    
-                    Text(llmOnline ? "Connected & Inference Active" : "LM Studio Offline (Launch Server)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                if !llmOnline {
-                    Button(action: launchLMStudio) {
-                        Label("Launch LM Studio", systemImage: "arrow.up.forward.app")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.borderedProminent)
-                } else {
-                    Button(action: checkLLMConnection) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .help("Refresh connection")
-                }
-            }
-            
-            Divider()
-            
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Active Server Model")
-                        .font(.caption2.weight(.bold))
-                        .foregroundColor(.secondary)
-                    Text(llmStatusText)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("API Endpoint")
-                        .font(.caption2.weight(.bold))
-                        .foregroundColor(.secondary)
-                    Text(appState.store.configuration.llm.endpointURL)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding(18)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
         )
     }
 
@@ -601,85 +499,4 @@ struct OverviewView: View {
         )
     }
     
-    // Check local server connection dynamically
-    private func checkLLMConnection() {
-        guard appState.store.configuration.llm.translationEnabled ?? true else {
-            llmOnline = false
-            llmStatusText = "Translation Disabled"
-            return
-        }
-        
-        let endpoint = appState.store.configuration.llm.endpointURL
-        var urlString = endpoint
-        if !urlString.hasSuffix("/models") {
-            if urlString.hasSuffix("/") {
-                urlString += "models"
-            } else if urlString.hasSuffix("/v1") {
-                urlString += "/models"
-            } else {
-                urlString += "/v1/models"
-            }
-        }
-        
-        guard let url = URL(string: urlString) else {
-            llmOnline = false
-            llmStatusText = "Invalid Server URL"
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 5.0
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            DispatchQueue.main.async {
-                if error != nil {
-                    self.llmOnline = false
-                    self.llmStatusText = "Offline (Click to launch)"
-                    return
-                }
-                
-                if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let dataArray = json["data"] as? [[String: Any]],
-                   let firstModel = dataArray.first,
-                   let modelName = firstModel["id"] as? String {
-                    self.llmOnline = true
-                    self.llmStatusText = modelName.components(separatedBy: "/").last ?? modelName
-                } else {
-                    self.llmOnline = true
-                    self.llmStatusText = "Inference Active"
-                }
-            }
-        }.resume()
-    }
-    
-    // Interactive startup of LM Studio
-    private func launchLMStudio() {
-        let bundleIDs = ["ai.element.lmstudio", "com.lmstudio.lmstudio"]
-        for bid in bundleIDs {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
-                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        self.checkLLMConnection()
-                    }
-                }
-                return
-            }
-        }
-        
-        // Custom URL schemas or download page redirects
-        if let url = URL(string: "lmstudio://") {
-            if NSWorkspace.shared.open(url) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    self.checkLLMConnection()
-                }
-                return
-            }
-        }
-        
-        if let url = URL(string: "https://lmstudio.ai") {
-            NSWorkspace.shared.open(url)
-        }
-    }
 }
