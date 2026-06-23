@@ -12,6 +12,15 @@ LayoutPilot is a macOS utility project for:
 - `LayoutPilot` is the native macOS app with a main window, settings scene, and menu bar extra.
 - `Tests` covers the core configuration and persistence layer.
 
+## Install
+
+For normal use, download `LayoutPilot.dmg` from GitHub Releases, open it, drag
+`LayoutPilot.app` to `Applications`, launch it, and grant Accessibility
+permission in macOS when prompted.
+
+For detailed DMG, source-build, signing, and permission steps, see
+[docs/INSTALL.md](docs/INSTALL.md).
+
 ## Run
 
 Generate the Xcode project, then run:

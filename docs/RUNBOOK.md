@@ -6,6 +6,8 @@
 ./script/build_and_run.sh
 ```
 
+User-facing install instructions live in [INSTALL.md](INSTALL.md).
+
 ## Project artifacts
 
 - Project file: `LayoutPilot.xcodeproj`
@@ -39,6 +41,10 @@ To publish a new update for LayoutPilot:
    - Commit and push changes to git.
    - Create a GitHub Release and upload `LayoutPilot.dmg`.
 
+For a DMG intended for other people, build with a `Developer ID Application`
+certificate and notarize the app before broad distribution. A development-signed
+DMG is useful for local testing, but other Macs may show Gatekeeper warnings.
+
 ---
 
 ## Current scope
@@ -46,4 +52,3 @@ To publish a new update for LayoutPilot:
 - automatic input-source switching by frontmost bundle ID
 - UI for app rules and input profiles
 - placeholder LLM settings for future expansion
-
