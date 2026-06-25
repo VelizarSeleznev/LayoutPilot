@@ -2,6 +2,7 @@ import AppKit
 import Carbon
 import CoreGraphics
 import Foundation
+import OSLog
 
 public final class SmartInputService: @unchecked Sendable {
     public static let shared = SmartInputService()
@@ -11,6 +12,10 @@ public final class SmartInputService: @unchecked Sendable {
     public var onRewriteHotkey: (@Sendable () -> Void)?
 
     private let magicEventTag: Int64 = 0x44414E495348 // "DANISH"
+    private let logger = Logger(
+        subsystem: "com.velizard.LayoutPilot",
+        category: "SmartInputService"
+    )
     private let usInputSources = Set(["com.apple.keylayout.US", "com.apple.keylayout.ABC"])
     private let danishLanguage = "da"
     
@@ -286,7 +291,10 @@ public final class SmartInputService: @unchecked Sendable {
     }
     
     private func runEventLoop() {
-        let port = CFRunLoopGetCurrent()
+        guard let runLoop = CFRunLoopGetCurrent() else {
+            logger.error("Failed to get smart input event tap run loop")
+            return
+        }
         
         while isStarted {
             if !AXIsProcessTrusted() {
@@ -312,13 +320,14 @@ public final class SmartInputService: @unchecked Sendable {
                 callback: callback,
                 userInfo: selfOpaque
             ) else {
+                logger.error("Failed to create smart input event tap")
                 Thread.sleep(forTimeInterval: 5)
                 continue
             }
             
             self.eventTap = tap
             let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(port, runLoopSource, .commonModes)
+            CFRunLoopAddSource(runLoop, runLoopSource, .commonModes)
             let spotlightTimer = CFRunLoopTimerCreateWithHandler(
                 kCFAllocatorDefault,
                 CFAbsoluteTimeGetCurrent() + 0.2,
@@ -328,10 +337,30 @@ public final class SmartInputService: @unchecked Sendable {
             ) { [weak self] _ in
                 self?.forceUSIfSpotlightIsActive()
             }
-            CFRunLoopAddTimer(port, spotlightTimer, .commonModes)
+            CFRunLoopAddTimer(runLoop, spotlightTimer, .commonModes)
+
+            let watchdogTimer = CFRunLoopTimerCreateWithHandler(
+                kCFAllocatorDefault,
+                CFAbsoluteTimeGetCurrent() + 1.0,
+                1.0,
+                0,
+                0
+            ) { [weak self] _ in
+                self?.recoverEventTapIfNeeded(tap: tap, runLoop: runLoop)
+            }
+            CFRunLoopAddTimer(runLoop, watchdogTimer, .commonModes)
+
             CGEvent.tapEnable(tap: tap, enable: true)
+            logger.info("Smart input event tap started")
             
             CFRunLoopRun()
+
+            CFRunLoopTimerInvalidate(spotlightTimer)
+            CFRunLoopTimerInvalidate(watchdogTimer)
+            CFRunLoopRemoveSource(runLoop, runLoopSource, .commonModes)
+            if self.eventTap === tap {
+                self.eventTap = nil
+            }
         }
     }
     
@@ -342,9 +371,7 @@ public final class SmartInputService: @unchecked Sendable {
     
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let eventTap {
-                CGEvent.tapEnable(tap: eventTap, enable: true)
-            }
+            recoverEventTapAfterDisable(reason: type == .tapDisabledByTimeout ? "timeout" : "user_input")
             return Unmanaged.passUnretained(event)
         }
         
@@ -569,6 +596,30 @@ public final class SmartInputService: @unchecked Sendable {
         
         buffer.reset()
         return Unmanaged.passUnretained(event)
+    }
+
+    private func recoverEventTapAfterDisable(reason: String) {
+        guard let eventTap else { return }
+        logger.warning("Smart input event tap disabled by \(reason, privacy: .public); re-enabling")
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+    }
+
+    private func recoverEventTapIfNeeded(tap: CFMachPort, runLoop: CFRunLoop) {
+        guard isStarted else {
+            CFRunLoopStop(runLoop)
+            return
+        }
+
+        guard CFMachPortIsValid(tap) else {
+            logger.error("Smart input event tap became invalid; recreating")
+            CFRunLoopStop(runLoop)
+            return
+        }
+
+        if !CGEvent.tapIsEnabled(tap: tap) {
+            logger.warning("Smart input event tap was disabled without callback; re-enabling")
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
     }
 
     private func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {
