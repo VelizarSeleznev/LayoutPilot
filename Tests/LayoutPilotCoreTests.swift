@@ -291,6 +291,70 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us"])
     }
 
+    func testProfileRuleDoesNotFightManualSwitchInActiveApp() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+        let us = InputLayoutProfile(name: "U.S.", inputSourceID: "us")
+        store.configuration = LayoutPilotConfiguration(
+            automationEnabled: true,
+            profiles: [us],
+            rules: [
+                ApplicationLayoutRule(
+                    applicationBundleID: "com.example.Editor",
+                    applicationName: "Editor",
+                    profileID: us.id,
+                    target: .profile
+                )
+            ]
+        )
+
+        let inputSourceClient = FakeInputSourceClient(currentSourceID: "ru")
+        var activeContext = RecentApplicationContext(applicationName: "Editor", bundleID: "com.example.Editor")
+        let engine = LayoutAutomationEngine(
+            store: store,
+            inputSourceClient: inputSourceClient,
+            activeContextProvider: { activeContext }
+        )
+
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us"])
+
+        inputSourceClient.currentSourceID = "ru"
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us"])
+        XCTAssertEqual(engine.snapshot.currentInputSourceID, "ru")
+
+        engine.refreshNow(forceApplyRule: true)
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us", "us"])
+
+        activeContext = RecentApplicationContext(applicationName: "Browser", bundleID: "com.example.Browser")
+        inputSourceClient.currentSourceID = "ru"
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us", "us"])
+
+        activeContext = RecentApplicationContext(applicationName: "Editor", bundleID: "com.example.Editor")
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us", "us", "us"])
+    }
+
+    func testSpotlightForceSwitchOnlyRunsForOpenShortcut() {
+        XCTAssertTrue(SmartInputService.shouldForceUSForSpotlight(
+            keyCode: 49,
+            flags: [.maskCommand]
+        ))
+
+        XCTAssertFalse(SmartInputService.shouldForceUSForSpotlight(
+            keyCode: 0,
+            flags: []
+        ))
+
+        XCTAssertFalse(SmartInputService.shouldForceUSForSpotlight(
+            keyCode: 49,
+            flags: [.maskCommand, .maskAlternate]
+        ))
+    }
+
     func testBilingualConversion() {
         let service = SmartInputService.shared
         

@@ -328,17 +328,6 @@ public final class SmartInputService: @unchecked Sendable {
             self.eventTap = tap
             let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(runLoop, runLoopSource, .commonModes)
-            let spotlightTimer = CFRunLoopTimerCreateWithHandler(
-                kCFAllocatorDefault,
-                CFAbsoluteTimeGetCurrent() + 0.2,
-                0.2,
-                0,
-                0
-            ) { [weak self] _ in
-                self?.forceUSIfSpotlightIsActive()
-            }
-            CFRunLoopAddTimer(runLoop, spotlightTimer, .commonModes)
-
             let watchdogTimer = CFRunLoopTimerCreateWithHandler(
                 kCFAllocatorDefault,
                 CFAbsoluteTimeGetCurrent() + 1.0,
@@ -355,7 +344,6 @@ public final class SmartInputService: @unchecked Sendable {
             
             CFRunLoopRun()
 
-            CFRunLoopTimerInvalidate(spotlightTimer)
             CFRunLoopTimerInvalidate(watchdogTimer)
             CFRunLoopRemoveSource(runLoop, runLoopSource, .commonModes)
             if self.eventTap === tap {
@@ -622,19 +610,15 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
-    private func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {
-        let isSpotlightShortcut = keyCode == 49 &&
+    static func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        keyCode == 49 &&
             flags.contains(.maskCommand) &&
             !flags.contains(.maskAlternate) &&
             !flags.contains(.maskControl)
+    }
 
-        if isSpotlightShortcut {
-            return true
-        }
-
-        return SystemApplicationContexts.activeContext(
-            frontmostApplication: NSWorkspace.shared.frontmostApplication
-        ).bundleID == SystemApplicationContexts.spotlight.bundleID
+    private func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {
+        Self.shouldForceUSForSpotlight(keyCode: keyCode, flags: flags)
     }
 
     private func activatePreferredUSInputSource() {
@@ -650,17 +634,6 @@ public final class SmartInputService: @unchecked Sendable {
         try? client.activateInputSource(withID: "com.apple.keylayout.ABC")
     }
 
-    private func forceUSIfSpotlightIsActive() {
-        let activeContext = SystemApplicationContexts.activeContext(
-            frontmostApplication: NSWorkspace.shared.frontmostApplication
-        )
-        guard activeContext.bundleID == SystemApplicationContexts.spotlight.bundleID else {
-            return
-        }
-
-        activatePreferredUSInputSource()
-    }
-    
     private func currentInputSourceID() -> String? {
         if Thread.isMainThread {
             return currentInputSourceIDOnMainThread()

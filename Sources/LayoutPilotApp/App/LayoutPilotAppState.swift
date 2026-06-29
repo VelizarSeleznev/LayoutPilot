@@ -13,7 +13,7 @@ final class LayoutPilotAppState {
         self.engine = LayoutAutomationEngine(store: store)
         self.launchAtLoginState = LaunchAtLoginService.currentState()
         store.changeHandler = { [weak self, weak engine, store] in
-            engine?.refreshNow()
+            engine?.refreshNow(forceApplyRule: true)
             SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
             SmartInputService.shared.allowedBundleIDs = Set(store.configuration.smartDanishInputAllowedBundleIDs)
             

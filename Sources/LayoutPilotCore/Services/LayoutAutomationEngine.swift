@@ -77,11 +77,12 @@ public final class LayoutAutomationEngine {
         isRunning = false
     }
 
-    public func refreshNow() {
+    public func refreshNow(forceApplyRule: Bool = false) {
         let activeContext = activeContextProvider()
         let currentSourceID = inputSourceClient.currentInputSourceID() ?? "Unknown"
         let bundleID = activeContext.bundleID
         let appName = activeContext.applicationName
+        let enteredNewContext = previousBundleID == nil || previousBundleID != bundleID
         let shouldRestoreLastUsedInputSource = rememberLastUsedInputSource(
             currentSourceID,
             forPreviousBundleBeforeActivating: bundleID
@@ -118,7 +119,8 @@ public final class LayoutAutomationEngine {
                 rule,
                 appName: appName,
                 bundleID: bundleID,
-                currentSourceID: currentSourceID
+                currentSourceID: currentSourceID,
+                shouldApply: forceApplyRule || enteredNewContext
             )
         case .lastUsed:
             applyLastUsedRule(
@@ -182,7 +184,8 @@ public final class LayoutAutomationEngine {
         _ rule: ApplicationLayoutRule,
         appName: String,
         bundleID: String,
-        currentSourceID: String
+        currentSourceID: String,
+        shouldApply: Bool
     ) {
         guard let profile = store.profile(for: rule.profileID) else {
             snapshot = AutomationSnapshot(
@@ -193,6 +196,19 @@ public final class LayoutAutomationEngine {
                 lastAction: "No change"
             )
             lastErrorMessage = "Rule found for \(bundleID) but the target profile no longer exists."
+            return
+        }
+
+        guard shouldApply else {
+            rememberCurrentInputSource(currentSourceID, for: bundleID)
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: "Matched \(rule.applicationName) -> \(profile.name)",
+                lastAction: "Remembered current layout"
+            )
+            lastErrorMessage = nil
             return
         }
 
