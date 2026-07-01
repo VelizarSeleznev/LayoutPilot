@@ -219,11 +219,12 @@ public final class SmartInputService: @unchecked Sendable {
         let original: String
         let replacement: String
         let boundary: String
-        let timestamp: Date
+        var timestamp: Date
         let bundleID: String?
         let originalLayoutID: String?
         let targetLayoutID: String?
         var isActive: Bool
+        var boundaryBackspaceConsumed: Bool
     }
 
     private var lastReplacement: LastReplacementInfo?
@@ -396,34 +397,45 @@ public final class SmartInputService: @unchecked Sendable {
             if let last = lastReplacement, last.isActive {
                 let elapsed = Date().timeIntervalSince(last.timestamp)
                 if elapsed <= _smartBilingualUndoDelay {
-                    performReplacementUndo(last, elapsed: elapsed, keyCode: keyCode)
-                    return nil // Swallow event!
+                    if !last.boundary.isEmpty, !last.boundaryBackspaceConsumed {
+                        markReplacementBoundaryBackspaceConsumed(last, elapsed: elapsed, keyCode: keyCode)
+                        return Unmanaged.passUnretained(event)
+                    }
+                    performReplacementUndo(
+                        last,
+                        elapsed: elapsed,
+                        keyCode: keyCode,
+                        deleteBoundary: !last.boundaryBackspaceConsumed
+                    )
+                    return nil // Swallow event.
                 } else {
                     lastReplacement?.isActive = false
-                    learningStore.recordRejectedConversion(
-                        mode: last.mode,
-                        original: last.original,
-                        replacement: last.replacement,
-                        sourceLayoutID: last.originalLayoutID,
-                        targetLayoutID: last.targetLayoutID,
-                        bundleID: last.bundleID
-                    )
-                    SmartInputEventLog.shared.record(.init(
-                        kind: "backspace_after_replacement_window",
-                        mode: last.mode,
-                        reason: "next input was backspace after undo window; learned rejected conversion",
-                        bundleID: last.bundleID,
-                        sourceLayoutID: last.originalLayoutID,
-                        targetLayoutID: last.targetLayoutID,
-                        original: last.original,
-                        replacement: last.replacement,
-                        boundary: last.boundary,
-                        keyCode: keyCode,
-                        bufferBefore: buffer.token,
-                        elapsedSinceReplacement: elapsed,
-                        replacementAgeLimit: _smartBilingualUndoDelay,
-                        suppressionReason: "learned_user_rejection"
-                    ))
+                    if last.boundary.isEmpty || last.boundaryBackspaceConsumed {
+                        learningStore.recordRejectedConversion(
+                            mode: last.mode,
+                            original: last.original,
+                            replacement: last.replacement,
+                            sourceLayoutID: last.originalLayoutID,
+                            targetLayoutID: last.targetLayoutID,
+                            bundleID: last.bundleID
+                        )
+                        SmartInputEventLog.shared.record(.init(
+                            kind: "backspace_after_replacement_window",
+                            mode: last.mode,
+                            reason: "next input was backspace after undo window; learned rejected conversion",
+                            bundleID: last.bundleID,
+                            sourceLayoutID: last.originalLayoutID,
+                            targetLayoutID: last.targetLayoutID,
+                            original: last.original,
+                            replacement: last.replacement,
+                            boundary: last.boundary,
+                            keyCode: keyCode,
+                            bufferBefore: buffer.token,
+                            elapsedSinceReplacement: elapsed,
+                            replacementAgeLimit: _smartBilingualUndoDelay,
+                            suppressionReason: "learned_user_rejection"
+                        ))
+                    }
                 }
             }
             let bufferBefore = buffer.token
@@ -1287,7 +1299,8 @@ public final class SmartInputService: @unchecked Sendable {
             bundleID: bundleID,
             originalLayoutID: originalLayoutID,
             targetLayoutID: targetLayoutID,
-            isActive: true
+            isActive: true,
+            boundaryBackspaceConsumed: false
         )
 
         SmartInputEventLog.shared.record(.init(
@@ -1305,7 +1318,39 @@ public final class SmartInputService: @unchecked Sendable {
         ))
     }
 
-    private func performReplacementUndo(_ last: LastReplacementInfo, elapsed: Double, keyCode: Int64) {
+    private func markReplacementBoundaryBackspaceConsumed(
+        _ last: LastReplacementInfo,
+        elapsed: Double,
+        keyCode: Int64
+    ) {
+        var updated = last
+        updated.boundaryBackspaceConsumed = true
+        updated.timestamp = Date()
+        lastReplacement = updated
+
+        SmartInputEventLog.shared.record(.init(
+            kind: "replacement_boundary_backspace",
+            mode: last.mode,
+            reason: "first backspace after replacement deletes boundary before undo",
+            bundleID: last.bundleID,
+            sourceLayoutID: last.originalLayoutID,
+            targetLayoutID: last.targetLayoutID,
+            original: last.original,
+            replacement: last.replacement,
+            boundary: last.boundary,
+            keyCode: keyCode,
+            bufferBefore: buffer.token,
+            elapsedSinceReplacement: elapsed,
+            replacementAgeLimit: _smartBilingualUndoDelay
+        ))
+    }
+
+    private func performReplacementUndo(
+        _ last: LastReplacementInfo,
+        elapsed: Double,
+        keyCode: Int64,
+        deleteBoundary: Bool
+    ) {
         lastReplacement?.isActive = false
         learningStore.recordRejectedConversion(
             mode: last.mode,
@@ -1316,7 +1361,7 @@ public final class SmartInputService: @unchecked Sendable {
             bundleID: last.bundleID
         )
         
-        let charsToDeleteCount = last.replacement.count + last.boundary.count
+        let charsToDeleteCount = last.replacement.count + (deleteBoundary ? last.boundary.count : 0)
         for _ in 0..<charsToDeleteCount {
             postKey(51) // Post Backspace
         }
