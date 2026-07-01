@@ -80,6 +80,8 @@ public struct RecentApplicationContext: Identifiable, Hashable, Sendable {
 }
 
 public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
+    public static let defaultSmartBilingualUndoDelay = 3.0
+
     public var automationEnabled: Bool
     public var launchAtLogin: Bool
     public var showMenuBarItem: Bool
@@ -107,7 +109,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         smartDanishInputAllowedBundleIDs: [String] = [],
         smartBilingualEnabled: Bool = true,
         smartBilingualAllowedBundleIDs: [String] = [],
-        smartBilingualUndoDelay: Double = 0.5,
+        smartBilingualUndoDelay: Double = Self.defaultSmartBilingualUndoDelay,
         defaultAutoSwitchEnabled: Bool = false,
         defaultAutoSwitchTarget: ApplicationLayoutRuleTarget = .lastUsed,
         defaultAutoSwitchProfileID: UUID? = nil,
@@ -160,7 +162,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartDanishInputAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartDanishInputAllowedBundleIDs) ?? []
         self.smartBilingualEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualEnabled) ?? true
         self.smartBilingualAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartBilingualAllowedBundleIDs) ?? self.smartDanishInputAllowedBundleIDs
-        self.smartBilingualUndoDelay = try container.decodeIfPresent(Double.self, forKey: .smartBilingualUndoDelay) ?? 0.5
+        self.smartBilingualUndoDelay = try container.decodeIfPresent(Double.self, forKey: .smartBilingualUndoDelay) ?? Self.defaultSmartBilingualUndoDelay
         self.defaultAutoSwitchEnabled = try container.decodeIfPresent(Bool.self, forKey: .defaultAutoSwitchEnabled) ?? false
         self.defaultAutoSwitchTarget = try container.decodeIfPresent(ApplicationLayoutRuleTarget.self, forKey: .defaultAutoSwitchTarget) ?? .lastUsed
         self.defaultAutoSwitchProfileID = try container.decodeIfPresent(UUID.self, forKey: .defaultAutoSwitchProfileID)
@@ -215,7 +217,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
             smartDanishInputAllowedBundleIDs: defaultApps,
             smartBilingualEnabled: true,
             smartBilingualAllowedBundleIDs: defaultApps,
-            smartBilingualUndoDelay: 0.5,
+            smartBilingualUndoDelay: Self.defaultSmartBilingualUndoDelay,
             profiles: [us, russian],
             rules: [
                 ApplicationLayoutRule(

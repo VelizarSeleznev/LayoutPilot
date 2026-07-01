@@ -160,6 +160,28 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(spotlightRule?.target, .lastUsed)
     }
 
+    func testStoreMigratesLegacySmartBilingualUndoDelay() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
+        let configuration = LayoutPilotConfiguration(
+            smartBilingualUndoDelay: 0.5,
+            profiles: [],
+            rules: []
+        )
+
+        let data = try JSONEncoder().encode(configuration)
+        try data.write(to: fileURL)
+
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        XCTAssertEqual(
+            store.configuration.smartBilingualUndoDelay,
+            LayoutPilotConfiguration.defaultSmartBilingualUndoDelay
+        )
+    }
+
     func testStoreMigratesDefaultSpotlightUSRuleToLastUsedWhenDefaultIsLastUsed() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileURL = tempDirectory.appendingPathComponent("configuration.json")

@@ -269,6 +269,9 @@ public final class LayoutPilotStore {
 
     private static func normalizedConfiguration(_ configuration: LayoutPilotConfiguration) -> LayoutPilotConfiguration {
         var configuration = configuration
+        if configuration.smartBilingualUndoDelay <= 0.5 {
+            configuration.smartBilingualUndoDelay = LayoutPilotConfiguration.defaultSmartBilingualUndoDelay
+        }
         if matchedRule(in: configuration.rules, for: SystemApplicationContexts.spotlight.bundleID) == nil,
            let usProfile = defaultUSProfile(in: configuration.profiles) {
             configuration.rules.insert(

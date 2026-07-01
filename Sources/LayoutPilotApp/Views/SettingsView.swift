@@ -31,7 +31,7 @@ struct SettingsView: View {
                     Stepper(value: Binding(
                         get: { appState.store.configuration.smartBilingualUndoDelay },
                         set: { appState.store.setSmartBilingualUndoDelay($0) }
-                    ), in: 0.1...3.0, step: 0.1) {
+                    ), in: 0.5...5.0, step: 0.1) {
                         Text(String(format: "Undo delay: %.1f seconds", appState.store.configuration.smartBilingualUndoDelay))
                     }
                     .padding(.leading, 16)
