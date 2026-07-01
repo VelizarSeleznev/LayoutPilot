@@ -443,7 +443,7 @@ struct OverviewView: View {
                     title: "Applications Rules",
                     value: "\(appState.store.configuration.rules.count)",
                     subValue: "\(appState.store.configuration.rules.filter { $0.isEnabled }.count) layout triggers",
-                    systemImage: "arrow.triangle.2.circlepath.keyboard",
+                    systemImage: "arrow.triangle.2.circlepath",
                     color: .purple
                 )
                 

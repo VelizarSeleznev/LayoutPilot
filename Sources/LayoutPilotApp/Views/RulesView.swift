@@ -174,7 +174,7 @@ struct RulesView: View {
                         Spacer()
                         
                         // 1-Click Auto-Switching Toggle Button
-                        Image(systemName: "arrow.triangle.2.circlepath.keyboard")
+                        Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.body)
                             .foregroundColor(isAutoSwitchingActive ? .orange : .secondary.opacity(0.4))
                             .onTapGesture {

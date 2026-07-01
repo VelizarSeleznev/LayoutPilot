@@ -622,16 +622,18 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func activatePreferredUSInputSource() {
-        guard let currentSourceID = currentInputSourceID(),
-              !usInputSources.contains(currentSourceID) else {
-            return
-        }
+        DispatchQueue.main.async { [usInputSources] in
+            let client = SystemInputSourceClient()
+            guard let currentSourceID = client.currentInputSourceID(),
+                  !usInputSources.contains(currentSourceID) else {
+                return
+            }
 
-        let client = SystemInputSourceClient()
-        if (try? client.activateInputSource(withID: "com.apple.keylayout.US")) != nil {
-            return
+            if (try? client.activateInputSource(withID: "com.apple.keylayout.US")) != nil {
+                return
+            }
+            try? client.activateInputSource(withID: "com.apple.keylayout.ABC")
         }
-        try? client.activateInputSource(withID: "com.apple.keylayout.ABC")
     }
 
     private func currentInputSourceID() -> String? {

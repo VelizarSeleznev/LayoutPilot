@@ -38,6 +38,12 @@ public final class SystemInputSourceClient: InputSourceClient {
     public init() {}
 
     public func currentInputSourceID() -> String? {
+        guard Thread.isMainThread else {
+            return DispatchQueue.main.sync {
+                self.currentInputSourceID()
+            }
+        }
+
         guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let rawID = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
             return nil
@@ -46,6 +52,12 @@ public final class SystemInputSourceClient: InputSourceClient {
     }
 
     public func availableInputSources() -> [InputSourceInfo] {
+        guard Thread.isMainThread else {
+            return DispatchQueue.main.sync {
+                self.availableInputSources()
+            }
+        }
+
         guard let unmanaged = TISCreateInputSourceList(nil, false) else {
             return []
         }
@@ -71,6 +83,16 @@ public final class SystemInputSourceClient: InputSourceClient {
     }
 
     public func activateInputSource(withID inputSourceID: String) throws {
+        guard Thread.isMainThread else {
+            let result = DispatchQueue.main.sync {
+                Result {
+                    try self.activateInputSource(withID: inputSourceID)
+                }
+            }
+            try result.get()
+            return
+        }
+
         guard let match = availableInputSources().first(where: { $0.sourceID == inputSourceID }) else {
             throw InputSourceClientError.sourceNotFound(inputSourceID)
         }
