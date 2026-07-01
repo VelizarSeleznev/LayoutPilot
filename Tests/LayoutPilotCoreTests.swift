@@ -498,7 +498,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(result?.replacement, "и")
     }
 
-    func testRejectedConversionIsSuppressedByLearningStore() throws {
+    func testRejectedConversionRequiresRepeatedUndoBeforeSuppression() throws {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("smart-input-learning.json")
@@ -521,12 +521,28 @@ final class LayoutPilotCoreTests: XCTestCase {
             bundleID: "com.example.Editor"
         )
 
-        let afterLearning = service.checkBilingualConversion(
+        let afterOneUndo = service.checkBilingualConversion(
             for: "инпут",
             sourceLayoutID: "com.apple.keylayout.RussianWin",
             contextWords: ["пишу", "новый"]
         )
-        XCTAssertNil(afterLearning)
+        XCTAssertEqual(afterOneUndo?.replacement, "bygen")
+
+        store.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Editor"
+        )
+
+        let afterRepeatedUndo = service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            contextWords: ["пишу", "новый"]
+        )
+        XCTAssertNil(afterRepeatedUndo)
     }
 }
 

@@ -15,6 +15,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
 
     private var state: State
     private let acceptedWordPromotionCount = 3
+    private let rejectedConversionSuppressionCount = 2
 
     public convenience init() {
         let url = (try? LayoutPilotPaths.smartInputLearningURL()) ??
@@ -128,7 +129,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
             lastSeen: Date(),
             bundleIDs: []
         )
-        wordEntry.count = max(wordEntry.count + 1, acceptedWordPromotionCount)
+        wordEntry.count += 1
         wordEntry.lastSeen = Date()
         if let bundleID, !bundleID.isEmpty {
             wordEntry.bundleIDs.insert(bundleID)
@@ -160,8 +161,10 @@ public final class SmartInputLearningStore: @unchecked Sendable {
             sourceLayoutID: sourceLayoutID,
             targetLayoutID: targetLayoutID
         )
-        if let conversion = state.conversions[key], conversion.rejectedCount > 0 {
-            return "user_rejected_conversion"
+        if let conversion = state.conversions[key] {
+            return conversion.rejectedCount >= rejectedConversionSuppressionCount
+                ? "user_rejected_conversion"
+                : nil
         }
 
         let wordKey = Self.wordKey(word: original, layoutID: sourceLayoutID)
