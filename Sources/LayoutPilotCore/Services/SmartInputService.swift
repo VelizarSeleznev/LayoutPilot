@@ -498,6 +498,31 @@ public final class SmartInputService: @unchecked Sendable {
             
             if smartBilingualEnabled,
                isBilingualAllowed,
+               let sourceID = currentInputSourceID(),
+               let correctedToken = capitalizationCorrection(for: buffer.token, sourceLayoutID: sourceID) {
+                let originalToken = buffer.token
+                let contextBefore = contextHistory.getWords()
+
+                replaceToken(with: correctedToken, boundary: text)
+
+                recordReplacementForUndo(
+                    mode: "capitalization",
+                    reason: "corrected accidental double initial uppercase",
+                    original: originalToken,
+                    replacement: correctedToken,
+                    boundary: text,
+                    bundleID: activeBundleID,
+                    originalLayoutID: sourceID,
+                    targetLayoutID: nil,
+                    contextBefore: contextBefore
+                )
+
+                contextHistory.append(correctedToken)
+                return nil
+            }
+
+            if smartBilingualEnabled,
+               isBilingualAllowed,
                let bilingualResult = checkBilingualConversion(
                    for: buffer.token,
                    bundleID: activeBundleID,
@@ -759,6 +784,29 @@ public final class SmartInputService: @unchecked Sendable {
     private func containsScalar(from set: CharacterSet, in text: String) -> Bool {
         text.unicodeScalars.contains { set.contains($0) }
     }
+
+    private func isUppercaseLetter(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.uppercaseLetters.contains($0) }
+    }
+
+    private func isLowercaseLetter(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.lowercaseLetters.contains($0) }
+    }
+
+    private func correctingDoubleInitialUppercase(in token: String) -> String? {
+        let chars = Array(token)
+        guard chars.count >= 3,
+              isUppercaseLetter(chars[0]),
+              isUppercaseLetter(chars[1]),
+              isLowercaseLetter(chars[2]) else {
+            return nil
+        }
+
+        var corrected = String(chars[0])
+        corrected += String(chars[1]).lowercased()
+        corrected += String(chars.dropFirst(2))
+        return corrected == token ? nil : corrected
+    }
     
     private func isSingleInitialUppercaseAaToken(_ token: String) -> Bool {
         let chars = Array(token)
@@ -807,6 +855,30 @@ public final class SmartInputService: @unchecked Sendable {
             wordCount: nil
         )
         return range.location == NSNotFound
+    }
+
+    func capitalizationCorrection(for token: String, sourceLayoutID: String) -> String? {
+        guard let corrected = correctingDoubleInitialUppercase(in: token) else {
+            return nil
+        }
+
+        let isUS = usInputSources.contains(sourceLayoutID)
+        let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
+                        sourceLayoutID.hasSuffix(".ru") ||
+                        sourceLayoutID.contains(".ru.") ||
+                        sourceLayoutID == "ru"
+
+        if isUS {
+            guard isLatinWord(token), isValidEnglishWord(corrected) else { return nil }
+            return corrected
+        }
+
+        if isRussian {
+            guard isCyrillicWord(token), isValidRussianWord(corrected) else { return nil }
+            return corrected
+        }
+
+        return nil
     }
     
     private func replacementForCurrentToken() -> String? {
@@ -1086,7 +1158,8 @@ public final class SmartInputService: @unchecked Sendable {
                 return nil
             }
             
-            let translated = translateEnglishToRussian(token)
+            let rawTranslated = translateEnglishToRussian(token)
+            let translated = correctingDoubleInitialUppercase(in: rawTranslated) ?? rawTranslated
             guard isCyrillicWord(translated) else { return nil }
             let isWord = isValidRussianWord(translated)
             let isLikelyWord = token.count >= 4 &&
@@ -1103,7 +1176,8 @@ public final class SmartInputService: @unchecked Sendable {
                 return nil
             }
             
-            let translated = translateRussianToEnglish(token)
+            let rawTranslated = translateRussianToEnglish(token)
+            let translated = correctingDoubleInitialUppercase(in: rawTranslated) ?? rawTranslated
             guard isLatinWord(translated) else { return nil }
             let isWord = isValidEnglishWord(translated)
             let isLikelyWord = token.count >= 4 &&

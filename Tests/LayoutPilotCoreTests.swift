@@ -436,6 +436,34 @@ final class LayoutPilotCoreTests: XCTestCase {
             XCTAssertEqual(toResult?.replacement, "to")
         }
     }
+
+    func testDoubleInitialUppercaseCorrectionForCurrentLayout() {
+        let service = SmartInputService.shared
+
+        XCTAssertEqual(
+            service.capitalizationCorrection(
+                for: "ЧТо",
+                sourceLayoutID: "com.apple.keylayout.RussianWin"
+            ),
+            "Что"
+        )
+
+        XCTAssertNil(service.capitalizationCorrection(
+            for: "США",
+            sourceLayoutID: "com.apple.keylayout.RussianWin"
+        ))
+    }
+
+    func testBilingualConversionCorrectsDoubleInitialUppercaseAfterTranslation() {
+        let service = SmartInputService.shared
+
+        let result = service.checkBilingualConversion(
+            for: "XNj",
+            sourceLayoutID: "com.apple.keylayout.US"
+        )
+
+        XCTAssertEqual(result?.replacement, "Что")
+    }
     
     func testAvailableInputSourcesExcludePalettes() {
         let client = SystemInputSourceClient()
