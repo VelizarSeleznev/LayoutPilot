@@ -239,6 +239,37 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setTextSnippetsEnabled(_ value: Bool) {
+        var updated = configuration
+        updated.textSnippetsEnabled = value
+        configuration = updated
+    }
+
+    public func upsertTextSnippet(_ snippet: TextSnippet) {
+        guard let normalized = Self.normalizedTextSnippet(snippet) else {
+            return
+        }
+
+        var updated = configuration
+        if let index = updated.textSnippets.firstIndex(where: { $0.id == normalized.id || $0.trigger == normalized.trigger }) {
+            let existingID = updated.textSnippets[index].id
+            var replacement = normalized
+            replacement.id = existingID
+            updated.textSnippets.removeAll { $0.id == snippet.id || $0.trigger == normalized.trigger }
+            updated.textSnippets.insert(replacement, at: min(index, updated.textSnippets.count))
+        } else {
+            updated.textSnippets.append(normalized)
+        }
+        updated.textSnippets = Self.deduplicatedTextSnippets(updated.textSnippets)
+        configuration = updated
+    }
+
+    public func deleteTextSnippet(id: UUID) {
+        var updated = configuration
+        updated.textSnippets.removeAll { $0.id == id }
+        configuration = updated
+    }
+
 
     public func resetToDefaultConfiguration() {
         configuration = .default()
@@ -298,6 +329,7 @@ public final class LayoutPilotStore {
             }
         }
         configuration.rules = deduplicatedRules(configuration.rules)
+        configuration.textSnippets = deduplicatedTextSnippets(configuration.textSnippets)
         return configuration
     }
 
@@ -335,6 +367,34 @@ public final class LayoutPilotStore {
             } else {
                 indexByBundleID[rule.applicationBundleID] = result.count
                 result.append(rule)
+            }
+        }
+
+        return result
+    }
+
+    private static func normalizedTextSnippet(_ snippet: TextSnippet) -> TextSnippet? {
+        var normalized = snippet
+        normalized.trigger = snippet.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.trigger.isEmpty, !normalized.replacement.isEmpty else {
+            return nil
+        }
+        return normalized
+    }
+
+    private static func deduplicatedTextSnippets(_ snippets: [TextSnippet]) -> [TextSnippet] {
+        var result: [TextSnippet] = []
+        var indexByTrigger: [String: Int] = [:]
+
+        for snippet in snippets {
+            guard let normalized = normalizedTextSnippet(snippet) else {
+                continue
+            }
+            if let index = indexByTrigger[normalized.trigger] {
+                result[index] = normalized
+            } else {
+                indexByTrigger[normalized.trigger] = result.count
+                result.append(normalized)
             }
         }
 

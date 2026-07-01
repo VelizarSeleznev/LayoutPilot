@@ -182,6 +182,37 @@ final class LayoutPilotCoreTests: XCTestCase {
         )
     }
 
+    func testStoreUpsertsAndDeduplicatesTextSnippets() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        store.upsertTextSnippet(TextSnippet(trigger: " @@email ", replacement: "first@example.com"))
+        store.upsertTextSnippet(TextSnippet(trigger: "@@email", replacement: "second@example.com"))
+        store.upsertTextSnippet(TextSnippet(trigger: "", replacement: "ignored"))
+
+        XCTAssertEqual(store.configuration.textSnippets.count, 1)
+        XCTAssertEqual(store.configuration.textSnippets.first?.trigger, "@@email")
+        XCTAssertEqual(store.configuration.textSnippets.first?.replacement, "second@example.com")
+    }
+
+    func testTextSnippetDefaultsForExistingConfigurations() throws {
+        let data = """
+        {
+          "automationEnabled": true,
+          "launchAtLogin": false,
+          "showMenuBarItem": true,
+          "profiles": [],
+          "rules": []
+        }
+        """.data(using: .utf8)!
+
+        let configuration = try JSONDecoder().decode(LayoutPilotConfiguration.self, from: data)
+
+        XCTAssertTrue(configuration.textSnippetsEnabled)
+        XCTAssertTrue(configuration.textSnippets.isEmpty)
+    }
+
     func testStoreMigratesDefaultSpotlightUSRuleToLastUsedWhenDefaultIsLastUsed() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileURL = tempDirectory.appendingPathComponent("configuration.json")
@@ -571,6 +602,23 @@ final class LayoutPilotCoreTests: XCTestCase {
             contextWords: ["пишу", "новый"]
         )
         XCTAssertNil(afterRepeatedUndo)
+    }
+
+    func testSnippetLookupAndPrefixHandling() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippets = [
+            TextSnippet(trigger: "@@email", replacement: "me@example.com"),
+            TextSnippet(trigger: "disabled", replacement: "ignored", isEnabled: false)
+        ]
+
+        XCTAssertTrue(service.isSnippetTriggerContinuation("@"))
+        XCTAssertTrue(service.isSnippetTriggerContinuation("@@em"))
+        XCTAssertFalse(service.isSnippetTriggerContinuation("@@email"))
+        XCTAssertEqual(service.textSnippet(for: "@@email")?.replacement, "me@example.com")
+        XCTAssertNil(service.textSnippet(for: "disabled"))
     }
 }
 

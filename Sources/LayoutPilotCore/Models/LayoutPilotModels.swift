@@ -79,6 +79,40 @@ public struct RecentApplicationContext: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var trigger: String
+    public var replacement: String
+    public var isEnabled: Bool
+
+    public init(
+        id: UUID = UUID(),
+        trigger: String,
+        replacement: String,
+        isEnabled: Bool = true
+    ) {
+        self.id = id
+        self.trigger = trigger
+        self.replacement = replacement
+        self.isEnabled = isEnabled
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case trigger
+        case replacement
+        case isEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.trigger = try container.decode(String.self, forKey: .trigger)
+        self.replacement = try container.decode(String.self, forKey: .replacement)
+        self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+}
+
 public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public static let defaultSmartBilingualUndoDelay = 3.0
 
@@ -98,6 +132,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var smartBilingualApplyToAll: Bool
     /// When enabled, smart Danish input applies to every app (except built-in exclusions).
     public var smartDanishApplyToAll: Bool
+    public var textSnippetsEnabled: Bool
+    public var textSnippets: [TextSnippet]
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
 
@@ -115,6 +151,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         defaultAutoSwitchProfileID: UUID? = nil,
         smartBilingualApplyToAll: Bool = false,
         smartDanishApplyToAll: Bool = false,
+        textSnippetsEnabled: Bool = true,
+        textSnippets: [TextSnippet] = [],
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule]
     ) {
@@ -131,6 +169,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.defaultAutoSwitchProfileID = defaultAutoSwitchProfileID
         self.smartBilingualApplyToAll = smartBilingualApplyToAll
         self.smartDanishApplyToAll = smartDanishApplyToAll
+        self.textSnippetsEnabled = textSnippetsEnabled
+        self.textSnippets = textSnippets
         self.profiles = profiles
         self.rules = rules
     }
@@ -149,6 +189,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case defaultAutoSwitchProfileID
         case smartBilingualApplyToAll
         case smartDanishApplyToAll
+        case textSnippetsEnabled
+        case textSnippets
         case profiles
         case rules
     }
@@ -168,6 +210,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.defaultAutoSwitchProfileID = try container.decodeIfPresent(UUID.self, forKey: .defaultAutoSwitchProfileID)
         self.smartBilingualApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualApplyToAll) ?? false
         self.smartDanishApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartDanishApplyToAll) ?? false
+        self.textSnippetsEnabled = try container.decodeIfPresent(Bool.self, forKey: .textSnippetsEnabled) ?? true
+        self.textSnippets = try container.decodeIfPresent([TextSnippet].self, forKey: .textSnippets) ?? []
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
     }
@@ -272,6 +316,7 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
     case overview
     case rules
     case profiles
+    case snippets
     case chat
     case diagnostics
 
@@ -285,6 +330,8 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "Applications"
         case .profiles:
             return "Input Profiles"
+        case .snippets:
+            return "Snippets"
         case .chat:
             return "LLM Chat (Test)"
         case .diagnostics:
@@ -300,6 +347,8 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "app.badge"
         case .profiles:
             return "keyboard"
+        case .snippets:
+            return "text.badge.plus"
         case .chat:
             return "bubble.left.and.bubble.right"
         case .diagnostics:

@@ -175,6 +175,31 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
+    private var _textSnippetsEnabled = true
+    private var _textSnippets: [TextSnippet] = []
+
+    public var textSnippetsEnabled: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _textSnippetsEnabled
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _textSnippetsEnabled = newValue
+        }
+    }
+
+    public var textSnippets: [TextSnippet] {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _textSnippets
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _textSnippets = newValue
+        }
+    }
+
     private var _smartBilingualUndoDelay = 3.0
 
     public var smartBilingualUndoDelay: Double {
@@ -411,14 +436,7 @@ public final class SmartInputService: @unchecked Sendable {
                 } else {
                     lastReplacement?.isActive = false
                     if last.boundary.isEmpty || last.boundaryBackspaceConsumed {
-                        learningStore.recordRejectedConversion(
-                            mode: last.mode,
-                            original: last.original,
-                            replacement: last.replacement,
-                            sourceLayoutID: last.originalLayoutID,
-                            targetLayoutID: last.targetLayoutID,
-                            bundleID: last.bundleID
-                        )
+                        recordRejectedConversionIfNeeded(last)
                         SmartInputEventLog.shared.record(.init(
                             kind: "backspace_after_replacement_window",
                             mode: last.mode,
@@ -461,7 +479,7 @@ public final class SmartInputService: @unchecked Sendable {
             lastReplacement?.isActive = false
         }
 
-        guard isEnabled else {
+        guard isEnabled || smartBilingualEnabled || textSnippetsEnabled else {
             buffer.reset()
             contextHistory.reset()
             return Unmanaged.passUnretained(event)
@@ -482,11 +500,36 @@ public final class SmartInputService: @unchecked Sendable {
         guard let text = eventText(event), text.count == 1 else {
             return Unmanaged.passUnretained(event)
         }
+
+        let activeBundleID = frontmostBundleID() ?? ""
+        let snippetsAllowed = isTextSnippetsAllowed(for: activeBundleID)
+
+        if snippetsAllowed, isSnippetTriggerContinuation(buffer.token + text) {
+            buffer.append(text)
+            return Unmanaged.passUnretained(event)
+        }
         
         if isBoundary(text) {
-            let activeBundleID = frontmostBundleID() ?? ""
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
             let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
+
+            if snippetsAllowed,
+               let snippet = textSnippet(for: buffer.token) {
+                let originalToken = buffer.token
+                replaceToken(with: snippet.replacement, boundary: text)
+                recordReplacementForUndo(
+                    mode: "snippet",
+                    reason: "expanded text snippet trigger",
+                    original: originalToken,
+                    replacement: snippet.replacement,
+                    boundary: text,
+                    bundleID: activeBundleID,
+                    originalLayoutID: currentInputSourceID(),
+                    targetLayoutID: nil,
+                    contextBefore: contextHistory.getWords()
+                )
+                return nil
+            }
 
             if isDanishAllowed,
                let sourceID = currentInputSourceID(),
@@ -593,7 +636,6 @@ public final class SmartInputService: @unchecked Sendable {
         if let character = text.first, isWordCharacter(character) {
             buffer.append(text)
             
-            let activeBundleID = frontmostBundleID() ?? ""
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
 
             if isDanishAllowed,
@@ -696,26 +738,31 @@ public final class SmartInputService: @unchecked Sendable {
     }
     
     private func shouldHandleCurrentContext() -> Bool {
-        guard let sourceID = currentInputSourceID() else {
-            return false
-        }
-        
-        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") || 
-                        sourceID.hasSuffix(".ru") || 
-                        sourceID.contains(".ru.") || 
-                        sourceID == "ru"
-        let isUS = usInputSources.contains(sourceID)
-        
-        guard isUS || isRussian else {
-            return false
-        }
-        
         guard let bundleID = frontmostBundleID() else {
             return false
         }
         if excludedBundleIDs.contains(bundleID) {
             return false
         }
+
+        if isTextSnippetsAllowed(for: bundleID) {
+            return true
+        }
+
+        guard let sourceID = currentInputSourceID() else {
+            return false
+        }
+
+        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") ||
+                        sourceID.hasSuffix(".ru") ||
+                        sourceID.contains(".ru.") ||
+                        sourceID == "ru"
+        let isUS = usInputSources.contains(sourceID)
+
+        guard isUS || isRussian else {
+            return false
+        }
+
         return isDanishAllowed(for: bundleID) || isBilingualAllowed(for: bundleID)
     }
 
@@ -729,6 +776,26 @@ public final class SmartInputService: @unchecked Sendable {
     private func isBilingualAllowed(for bundleID: String) -> Bool {
         if excludedBundleIDs.contains(bundleID) { return false }
         return smartBilingualApplyToAll || smartBilingualAllowedBundleIDs.contains(bundleID)
+    }
+
+    private func isTextSnippetsAllowed(for bundleID: String) -> Bool {
+        if excludedBundleIDs.contains(bundleID) { return false }
+        return textSnippetsEnabled && textSnippets.contains { $0.isEnabled }
+    }
+
+    func textSnippet(for token: String) -> TextSnippet? {
+        textSnippets.first { snippet in
+            snippet.isEnabled && snippet.trigger == token && !snippet.replacement.isEmpty
+        }
+    }
+
+    func isSnippetTriggerContinuation(_ token: String) -> Bool {
+        guard !token.isEmpty else {
+            return false
+        }
+        return textSnippets.contains { snippet in
+            snippet.isEnabled && snippet.trigger.hasPrefix(token) && snippet.trigger != token
+        }
     }
     
     private func eventText(_ event: CGEvent) -> String? {
@@ -1352,14 +1419,7 @@ public final class SmartInputService: @unchecked Sendable {
         deleteBoundary: Bool
     ) {
         lastReplacement?.isActive = false
-        learningStore.recordRejectedConversion(
-            mode: last.mode,
-            original: last.original,
-            replacement: last.replacement,
-            sourceLayoutID: last.originalLayoutID,
-            targetLayoutID: last.targetLayoutID,
-            bundleID: last.bundleID
-        )
+        recordRejectedConversionIfNeeded(last)
         
         let charsToDeleteCount = last.replacement.count + (deleteBoundary ? last.boundary.count : 0)
         for _ in 0..<charsToDeleteCount {
@@ -1392,6 +1452,20 @@ public final class SmartInputService: @unchecked Sendable {
             replacementAgeLimit: _smartBilingualUndoDelay,
             suppressionReason: "learned_user_rejection"
         ))
+    }
+
+    private func recordRejectedConversionIfNeeded(_ last: LastReplacementInfo) {
+        guard last.mode != "snippet" else {
+            return
+        }
+        learningStore.recordRejectedConversion(
+            mode: last.mode,
+            original: last.original,
+            replacement: last.replacement,
+            sourceLayoutID: last.originalLayoutID,
+            targetLayoutID: last.targetLayoutID,
+            bundleID: last.bundleID
+        )
     }
 
     enum WordLanguage {

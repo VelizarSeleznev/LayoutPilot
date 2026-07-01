@@ -14,25 +14,13 @@ final class LayoutPilotAppState {
         self.launchAtLoginState = LaunchAtLoginService.currentState()
         store.changeHandler = { [weak self, weak engine, store] in
             engine?.refreshNow(forceApplyRule: true)
-            SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
-            SmartInputService.shared.allowedBundleIDs = Set(store.configuration.smartDanishInputAllowedBundleIDs)
-            
-            SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
-            SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
-            SmartInputService.shared.smartBilingualUndoDelay = store.configuration.smartBilingualUndoDelay
-            SmartInputService.shared.smartBilingualApplyToAll = store.configuration.smartBilingualApplyToAll
-            SmartInputService.shared.danishApplyToAll = store.configuration.smartDanishApplyToAll
+            Self.syncSmartInputService(with: store.configuration)
 
             // Sync launch at login
             self?.launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
         }
         engine.start()
-        SmartInputService.shared.isEnabled = store.configuration.smartDanishInputEnabled
-        SmartInputService.shared.allowedBundleIDs = Set(store.configuration.smartDanishInputAllowedBundleIDs)
-        
-        SmartInputService.shared.smartBilingualEnabled = store.configuration.smartBilingualEnabled
-        SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(store.configuration.smartBilingualAllowedBundleIDs)
-        SmartInputService.shared.smartBilingualUndoDelay = store.configuration.smartBilingualUndoDelay
+        Self.syncSmartInputService(with: store.configuration)
 
         // Sync launch at login on launch
         launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
@@ -48,5 +36,17 @@ final class LayoutPilotAppState {
     func setLaunchAtLogin(_ isEnabled: Bool) {
         launchAtLoginState = LaunchAtLoginService.sync(enabled: isEnabled)
         store.setLaunchAtLogin(isEnabled)
+    }
+
+    private static func syncSmartInputService(with configuration: LayoutPilotConfiguration) {
+        SmartInputService.shared.isEnabled = configuration.smartDanishInputEnabled
+        SmartInputService.shared.allowedBundleIDs = Set(configuration.smartDanishInputAllowedBundleIDs)
+        SmartInputService.shared.smartBilingualEnabled = configuration.smartBilingualEnabled
+        SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(configuration.smartBilingualAllowedBundleIDs)
+        SmartInputService.shared.smartBilingualUndoDelay = configuration.smartBilingualUndoDelay
+        SmartInputService.shared.smartBilingualApplyToAll = configuration.smartBilingualApplyToAll
+        SmartInputService.shared.danishApplyToAll = configuration.smartDanishApplyToAll
+        SmartInputService.shared.textSnippetsEnabled = configuration.textSnippetsEnabled
+        SmartInputService.shared.textSnippets = configuration.textSnippets
     }
 }

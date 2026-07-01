@@ -27,6 +27,11 @@ struct SettingsView: View {
                     set: { appState.store.setSmartBilingualEnabled($0) }
                 ))
 
+                Toggle("Text Snippets", isOn: Binding(
+                    get: { appState.store.configuration.textSnippetsEnabled },
+                    set: { appState.store.setTextSnippetsEnabled($0) }
+                ))
+
                 if appState.store.configuration.smartBilingualEnabled {
                     Stepper(value: Binding(
                         get: { appState.store.configuration.smartBilingualUndoDelay },
