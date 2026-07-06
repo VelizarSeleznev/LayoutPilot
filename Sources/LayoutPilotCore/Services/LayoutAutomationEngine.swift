@@ -19,6 +19,7 @@ public final class LayoutAutomationEngine {
     private var refreshTimer: DispatchSourceTimer?
     private var previousBundleID: String?
     private var lastUsedInputSourceByBundleID: [String: String] = [:]
+    private var previousWebsiteDomain: String?
 
     public init(
         store: LayoutPilotStore,
@@ -83,6 +84,20 @@ public final class LayoutAutomationEngine {
         let bundleID = activeContext.bundleID
         let appName = activeContext.applicationName
         let enteredNewContext = previousBundleID == nil || previousBundleID != bundleID
+        
+        var activeWebsiteDomain: String?
+        if BrowserURLService.isBrowser(bundleID: bundleID),
+           let frontmostApp = NSWorkspace.shared.frontmostApplication,
+           frontmostApp.bundleIdentifier == bundleID {
+            if let activeURLString = BrowserURLService.activeURL(for: frontmostApp),
+               let url = URL(string: activeURLString) {
+                activeWebsiteDomain = url.host?.lowercased() ?? url.absoluteString.lowercased()
+            }
+        }
+        
+        let didWebsiteChange = activeWebsiteDomain != previousWebsiteDomain
+        previousWebsiteDomain = activeWebsiteDomain
+
         let shouldRestoreLastUsedInputSource = rememberLastUsedInputSource(
             currentSourceID,
             forPreviousBundleBeforeActivating: bundleID
@@ -99,6 +114,22 @@ public final class LayoutAutomationEngine {
                 lastAction: "Idle"
             )
             return
+        }
+
+        if let domain = activeWebsiteDomain {
+            if let matchedWebsiteRule = store.configuration.websiteRules.first(where: { rule in
+                rule.isEnabled && (domain == rule.domain || domain.hasSuffix("." + rule.domain))
+            }) {
+                applyWebsiteRule(
+                    matchedWebsiteRule,
+                    host: domain,
+                    appName: appName,
+                    bundleID: bundleID,
+                    currentSourceID: currentSourceID,
+                    shouldApply: forceApplyRule || enteredNewContext || didWebsiteChange
+                )
+                return
+            }
         }
 
         guard let rule = store.effectiveRule(for: bundleID, applicationName: appName) else {
@@ -308,6 +339,72 @@ public final class LayoutAutomationEngine {
                 frontmostBundleID: bundleID,
                 currentInputSourceID: currentSourceID,
                 matchedRuleDescription: description,
+                lastAction: "Switch failed"
+            )
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyWebsiteRule(
+        _ rule: WebsiteLayoutRule,
+        host: String,
+        appName: String,
+        bundleID: String,
+        currentSourceID: String,
+        shouldApply: Bool
+    ) {
+        guard let profile = store.profile(for: rule.profileID) else {
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: "Missing profile \(rule.profileID.uuidString)",
+                lastAction: "No change"
+            )
+            lastErrorMessage = "Rule found for website \(host) but the target profile no longer exists."
+            return
+        }
+
+        guard shouldApply else {
+            rememberCurrentInputSource(currentSourceID, for: bundleID)
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: "Matched website \(host) -> \(profile.name)",
+                lastAction: "Remembered current layout"
+            )
+            lastErrorMessage = nil
+            return
+        }
+
+        if profile.inputSourceID == currentSourceID {
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: "Matched website \(host) -> \(profile.name)",
+                lastAction: "Already on \(profile.name)"
+            )
+            return
+        }
+
+        do {
+            try inputSourceClient.activateInputSource(withID: profile.inputSourceID)
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: profile.inputSourceID,
+                matchedRuleDescription: "Matched website \(host) -> \(profile.name)",
+                lastAction: "Switched to \(profile.name)"
+            )
+            lastErrorMessage = nil
+        } catch {
+            snapshot = AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: bundleID,
+                currentInputSourceID: currentSourceID,
+                matchedRuleDescription: "Matched website \(host) -> \(profile.name)",
                 lastAction: "Switch failed"
             )
             lastErrorMessage = error.localizedDescription

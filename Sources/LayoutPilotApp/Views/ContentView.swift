@@ -48,6 +48,8 @@ struct ContentView: View {
             OverviewView(appState: appState)
         case .rules:
             RulesView(appState: appState)
+        case .websites:
+            WebsitesView(appState: appState)
         case .profiles:
             ProfilesView(appState: appState)
         case .snippets:

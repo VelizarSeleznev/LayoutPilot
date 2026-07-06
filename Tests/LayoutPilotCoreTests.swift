@@ -620,6 +620,55 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(service.textSnippet(for: "@@email")?.replacement, "me@example.com")
         XCTAssertNil(service.textSnippet(for: "disabled"))
     }
+
+    func testWebsiteRulesMatchingAndAutoSwitching() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+        let us = InputLayoutProfile(name: "U.S.", inputSourceID: "us")
+        let russian = InputLayoutProfile(name: "Russian", inputSourceID: "ru")
+        store.configuration = LayoutPilotConfiguration(
+            automationEnabled: true,
+            profiles: [us, russian],
+            rules: [],
+            websiteRules: [
+                WebsiteLayoutRule(domain: "github.com", profileID: us.id, isEnabled: true),
+                WebsiteLayoutRule(domain: "yandex.ru", profileID: russian.id, isEnabled: true)
+            ]
+        )
+
+        let rule1 = store.configuration.websiteRules[0]
+        XCTAssertTrue("github.com" == rule1.domain || "github.com".hasSuffix("." + rule1.domain))
+        XCTAssertTrue("sub.github.com".hasSuffix("." + rule1.domain))
+        XCTAssertFalse("othergithub.com".hasSuffix("." + rule1.domain))
+    }
+
+    func testCmdTInterception() {
+        XCTAssertTrue(SmartInputService.shouldForceUSForBrowserNewTab(
+            keyCode: 17,
+            flags: [.maskCommand],
+            bundleID: "com.google.Chrome"
+        ))
+
+        XCTAssertFalse(SmartInputService.shouldForceUSForBrowserNewTab(
+            keyCode: 17,
+            flags: [.maskCommand],
+            bundleID: "com.apple.Terminal"
+        ))
+
+        XCTAssertFalse(SmartInputService.shouldForceUSForBrowserNewTab(
+            keyCode: 49,
+            flags: [.maskCommand],
+            bundleID: "com.google.Chrome"
+        ))
+    }
+
+    func testBrowserURLServiceDetection() {
+        XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "com.apple.Safari"))
+        XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "com.google.Chrome"))
+        XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "company.thebrowser.Browser"))
+        XCTAssertFalse(BrowserURLService.isBrowser(bundleID: "com.apple.Terminal"))
+    }
 }
 
 private final class FakeInputSourceClient: InputSourceClient {

@@ -110,6 +110,32 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func upsertWebsiteRule(_ rule: WebsiteLayoutRule) {
+        var updated = configuration
+        let normalizedDomain = rule.domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedDomain.isEmpty else { return }
+        var normalizedRule = rule
+        normalizedRule.domain = normalizedDomain
+
+        if let index = updated.websiteRules.firstIndex(where: { $0.id == normalizedRule.id || $0.domain == normalizedRule.domain }) {
+            let existingID = updated.websiteRules[index].id
+            var replacement = normalizedRule
+            replacement.id = existingID
+            updated.websiteRules.removeAll { $0.domain == normalizedRule.domain || $0.id == normalizedRule.id }
+            updated.websiteRules.insert(replacement, at: min(index, updated.websiteRules.count))
+        } else {
+            updated.websiteRules.append(normalizedRule)
+        }
+        updated.websiteRules = Self.deduplicatedWebsiteRules(updated.websiteRules)
+        configuration = updated
+    }
+
+    public func deleteWebsiteRule(id: UUID) {
+        var updated = configuration
+        updated.websiteRules.removeAll { $0.id == id }
+        configuration = updated
+    }
+
     public func upsertProfile(_ profile: InputLayoutProfile) {
         var updated = configuration
         if let index = updated.profiles.firstIndex(where: { $0.id == profile.id }) {
@@ -330,6 +356,7 @@ public final class LayoutPilotStore {
         }
         configuration.rules = deduplicatedRules(configuration.rules)
         configuration.textSnippets = deduplicatedTextSnippets(configuration.textSnippets)
+        configuration.websiteRules = deduplicatedWebsiteRules(configuration.websiteRules)
         return configuration
     }
 
@@ -395,6 +422,27 @@ public final class LayoutPilotStore {
             } else {
                 indexByTrigger[normalized.trigger] = result.count
                 result.append(normalized)
+            }
+        }
+
+        return result
+    }
+
+    private static func deduplicatedWebsiteRules(_ rules: [WebsiteLayoutRule]) -> [WebsiteLayoutRule] {
+        var result: [WebsiteLayoutRule] = []
+        var indexByDomain: [String: Int] = [:]
+
+        for rule in rules {
+            let domain = rule.domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !domain.isEmpty else { continue }
+            var normalizedRule = rule
+            normalizedRule.domain = domain
+
+            if let index = indexByDomain[normalizedRule.domain] {
+                result[index] = normalizedRule
+            } else {
+                indexByDomain[normalizedRule.domain] = result.count
+                result.append(normalizedRule)
             }
         }
 

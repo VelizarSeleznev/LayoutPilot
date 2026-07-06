@@ -68,6 +68,40 @@ public struct ApplicationLayoutRule: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct WebsiteLayoutRule: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var domain: String
+    public var profileID: UUID
+    public var isEnabled: Bool
+
+    public init(
+        id: UUID = UUID(),
+        domain: String,
+        profileID: UUID,
+        isEnabled: Bool = true
+    ) {
+        self.id = id
+        self.domain = domain
+        self.profileID = profileID
+        self.isEnabled = isEnabled
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case domain
+        case profileID
+        case isEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.domain = try container.decode(String.self, forKey: .domain)
+        self.profileID = try container.decode(UUID.self, forKey: .profileID)
+        self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
+}
+
 public struct RecentApplicationContext: Identifiable, Hashable, Sendable {
     public var id: String { bundleID }
     public var applicationName: String
@@ -136,6 +170,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var textSnippets: [TextSnippet]
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
+    public var websiteRules: [WebsiteLayoutRule]
 
     public init(
         automationEnabled: Bool = true,
@@ -154,7 +189,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         textSnippetsEnabled: Bool = true,
         textSnippets: [TextSnippet] = [],
         profiles: [InputLayoutProfile],
-        rules: [ApplicationLayoutRule]
+        rules: [ApplicationLayoutRule],
+        websiteRules: [WebsiteLayoutRule] = []
     ) {
         self.automationEnabled = automationEnabled
         self.launchAtLogin = launchAtLogin
@@ -173,6 +209,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.textSnippets = textSnippets
         self.profiles = profiles
         self.rules = rules
+        self.websiteRules = websiteRules
     }
 
     enum CodingKeys: String, CodingKey {
@@ -193,6 +230,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case textSnippets
         case profiles
         case rules
+        case websiteRules
     }
 
     public init(from decoder: Decoder) throws {
@@ -214,6 +252,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.textSnippets = try container.decodeIfPresent([TextSnippet].self, forKey: .textSnippets) ?? []
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
+        self.websiteRules = try container.decodeIfPresent([WebsiteLayoutRule].self, forKey: .websiteRules) ?? []
     }
 
     public static func `default`() -> LayoutPilotConfiguration {
@@ -285,7 +324,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
                     applicationName: "Terminal",
                     profileID: us.id
                 )
-            ]
+            ],
+            websiteRules: []
         )
     }
 }
@@ -315,6 +355,7 @@ public struct AutomationSnapshot: Hashable, Sendable {
 public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendable {
     case overview
     case rules
+    case websites
     case profiles
     case snippets
     case chat
@@ -328,6 +369,8 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "Overview"
         case .rules:
             return "Applications"
+        case .websites:
+            return "Websites"
         case .profiles:
             return "Input Profiles"
         case .snippets:
@@ -345,6 +388,8 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "rectangle.3.group"
         case .rules:
             return "app.badge"
+        case .websites:
+            return "globe"
         case .profiles:
             return "keyboard"
         case .snippets:

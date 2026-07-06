@@ -408,6 +408,15 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
+        let activeBundleID = frontmostBundleID() ?? ""
+        if shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: activeBundleID) {
+            activatePreferredUSInputSource()
+            buffer.reset()
+            contextHistory.reset()
+            lastReplacement?.isActive = false
+            return Unmanaged.passUnretained(event)
+        }
+
         // Global Rewrite hotkey: Option+Shift+R (swallowed, handled in app layer).
         if keyCode == 15 {
             if flags.contains(.maskAlternate), flags.contains(.maskShift),
@@ -501,7 +510,6 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
-        let activeBundleID = frontmostBundleID() ?? ""
         let snippetsAllowed = isTextSnippetsAllowed(for: activeBundleID)
 
         if snippetsAllowed, isSnippetTriggerContinuation(buffer.token + text) {
@@ -698,6 +706,18 @@ public final class SmartInputService: @unchecked Sendable {
 
     private func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {
         Self.shouldForceUSForSpotlight(keyCode: keyCode, flags: flags)
+    }
+
+    static func shouldForceUSForBrowserNewTab(keyCode: Int64, flags: CGEventFlags, bundleID: String) -> Bool {
+        keyCode == 17 &&
+            flags.contains(.maskCommand) &&
+            !flags.contains(.maskAlternate) &&
+            !flags.contains(.maskControl) &&
+            BrowserURLService.isBrowser(bundleID: bundleID)
+    }
+
+    private func shouldForceUSForBrowserNewTab(keyCode: Int64, flags: CGEventFlags, bundleID: String) -> Bool {
+        Self.shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: bundleID)
     }
 
     private func activatePreferredUSInputSource() {
