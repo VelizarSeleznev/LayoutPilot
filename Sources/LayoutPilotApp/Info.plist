@@ -20,6 +20,8 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>LayoutPilot needs Automation permission to retrieve the active tab URL from your browser to apply website-specific layout rules.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

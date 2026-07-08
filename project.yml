@@ -67,6 +67,7 @@ targets:
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
+        NSAppleEventsUsageDescription: LayoutPilot needs Automation permission to retrieve the active tab URL from your browser to apply website-specific layout rules.
   LayoutPilotTests:
     type: bundle.unit-test
     platform: macOS
