@@ -93,7 +93,7 @@ public final class SmartInputService: @unchecked Sendable {
     private let buffer = WordBuffer()
     let contextHistory = ContextHistory()
     private let checker = NSSpellChecker.shared
-    private let learningStore: SmartInputLearningStore
+    let learningStore: SmartInputLearningStore
     
     private let lock = NSLock()
     private var _isEnabled = true
@@ -1072,7 +1072,7 @@ public final class SmartInputService: @unchecked Sendable {
         return (english, russian)
     }
 
-    private func isValidEnglishWord(_ word: String) -> Bool {
+    func isValidEnglishWord(_ word: String) -> Bool {
         if word.count == 1 {
             return commonEnglishShortWords.contains(word.lowercased())
         }
@@ -1090,7 +1090,7 @@ public final class SmartInputService: @unchecked Sendable {
         return range.location == NSNotFound
     }
 
-    private func isValidRussianWord(_ word: String) -> Bool {
+    func isValidRussianWord(_ word: String) -> Bool {
         if word.count == 1 {
             return commonRussianShortWords.contains(word.lowercased())
         }
@@ -1162,21 +1162,38 @@ public final class SmartInputService: @unchecked Sendable {
             sourceLayoutID: sourceLayoutID,
             targetLayoutID: candidate.targetLayoutID
         ) {
-            if logSuppression {
-                SmartInputEventLog.shared.record(.init(
-                    kind: "conversion_suppressed",
-                    mode: "bilingual",
-                    reason: "learned conversion should not be applied",
-                    bundleID: bundleID,
-                    sourceLayoutID: sourceLayoutID,
-                    targetLayoutID: candidate.targetLayoutID,
-                    original: token,
-                    replacement: candidate.replacement,
-                    contextBefore: contextWords,
-                    suppressionReason: suppressionReason
-                ))
+            var shouldBypass = false
+            if suppressionReason == "accepted_word_dictionary" {
+                let isUS = usInputSources.contains(sourceLayoutID)
+                let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
+                                sourceLayoutID.hasSuffix(".ru") ||
+                                sourceLayoutID.contains(".ru.") ||
+                                sourceLayoutID == "ru"
+                
+                if isUS {
+                    shouldBypass = !isValidEnglishWord(token) && isValidRussianWord(candidate.replacement)
+                } else if isRussian {
+                    shouldBypass = !isValidRussianWord(token) && isValidEnglishWord(candidate.replacement)
+                }
             }
-            return nil
+            
+            if !shouldBypass {
+                if logSuppression {
+                    SmartInputEventLog.shared.record(.init(
+                        kind: "conversion_suppressed",
+                        mode: "bilingual",
+                        reason: "learned conversion should not be applied",
+                        bundleID: bundleID,
+                        sourceLayoutID: sourceLayoutID,
+                        targetLayoutID: candidate.targetLayoutID,
+                        original: token,
+                        replacement: candidate.replacement,
+                        contextBefore: contextWords,
+                        suppressionReason: suppressionReason
+                    ))
+                }
+                return nil
+            }
         }
 
         return candidate

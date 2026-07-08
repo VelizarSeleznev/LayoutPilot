@@ -409,11 +409,51 @@ final class LayoutPilotCoreTests: XCTestCase {
     }
 
     func testBilingualConversion() {
-        let service = SmartInputService.shared
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("learning.json")
+        try? FileManager.default.createDirectory(at: tempURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
         
         // Assert that arbitrary short words/abbreviations of length < 3 never trigger bilingual conversion
         XCTAssertNil(service.checkBilingualConversion(for: "lc"))
         XCTAssertNil(service.checkBilingualConversion(for: "a")) // Latin 'a' under US is valid English (returns nil); under Russian, translates to 'f' which is not in commonEnglishShortWords (returns nil)
+        
+        // Test explicit sourceLayoutID conversions for 3-letter words
+        XCTAssertFalse(service.isValidEnglishWord("rfr"))
+        XCTAssertTrue(service.isValidRussianWord("как"))
+        let rfrUS = service.checkBilingualConversion(for: "rfr", sourceLayoutID: "com.apple.keylayout.US")
+        XCTAssertNotNil(rfrUS)
+        XCTAssertEqual(rfrUS?.replacement, "как")
+
+        let kakRU = service.checkBilingualConversion(for: "как", sourceLayoutID: "com.apple.keylayout.RussianWin")
+        XCTAssertNil(kakRU) // 'как' is a valid Russian word, shouldn't convert to English 'rfr'
+
+        let vshpRU = service.checkBilingualConversion(for: "вщп", sourceLayoutID: "com.apple.keylayout.RussianWin")
+        XCTAssertNotNil(vshpRU)
+        XCTAssertEqual(vshpRU?.replacement, "dog")
+
+        // Record 'rfr' as accepted in US layout 3 times.
+        for _ in 0..<3 {
+            service.learningStore.recordAcceptedWord("rfr", layoutID: "com.apple.keylayout.US", bundleID: "com.example.Test")
+        }
+        // Since 'rfr' is invalid in English but 'как' is valid in Russian, the accepted_word_dictionary suppression must be bypassed!
+        let rfrUSAfterAccepted = service.checkBilingualConversion(for: "rfr", sourceLayoutID: "com.apple.keylayout.US")
+        XCTAssertNotNil(rfrUSAfterAccepted)
+        XCTAssertEqual(rfrUSAfterAccepted?.replacement, "как")
+
+        // Record 2 rejections for 'rfr' -> 'как' conversion
+        for _ in 0..<2 {
+            service.learningStore.recordRejectedConversion(
+                mode: "bilingual",
+                original: "rfr",
+                replacement: "как",
+                sourceLayoutID: "com.apple.keylayout.US",
+                targetLayoutID: "com.apple.keylayout.RussianWin",
+                bundleID: "com.example.Test"
+            )
+        }
+        // Since it is explicitly rejected, it should be suppressed with 'user_rejected_conversion' which must NOT be bypassed!
+        let rfrUSAfterRejected = service.checkBilingualConversion(for: "rfr", sourceLayoutID: "com.apple.keylayout.US")
+        XCTAssertNil(rfrUSAfterRejected)
         
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let rawID = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
