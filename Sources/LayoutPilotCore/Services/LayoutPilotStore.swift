@@ -206,6 +206,12 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setSpellingAutocorrectEnabled(_ value: Bool) {
+        var updated = configuration
+        updated.spellingAutocorrectEnabled = value
+        configuration = updated
+    }
+
     public func setSmartBilingualAllowedBundleIDs(_ value: [String]) {
         var updated = configuration
         updated.smartBilingualAllowedBundleIDs = value.sorted()

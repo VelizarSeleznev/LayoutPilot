@@ -171,6 +171,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
     public var websiteRules: [WebsiteLayoutRule]
+    public var spellingAutocorrectEnabled: Bool
 
     public init(
         automationEnabled: Bool = true,
@@ -190,7 +191,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         textSnippets: [TextSnippet] = [],
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule],
-        websiteRules: [WebsiteLayoutRule] = []
+        websiteRules: [WebsiteLayoutRule] = [],
+        spellingAutocorrectEnabled: Bool = true
     ) {
         self.automationEnabled = automationEnabled
         self.launchAtLogin = launchAtLogin
@@ -210,6 +212,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.profiles = profiles
         self.rules = rules
         self.websiteRules = websiteRules
+        self.spellingAutocorrectEnabled = spellingAutocorrectEnabled
     }
 
     enum CodingKeys: String, CodingKey {
@@ -231,6 +234,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case profiles
         case rules
         case websiteRules
+        case spellingAutocorrectEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -253,6 +257,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
         self.websiteRules = try container.decodeIfPresent([WebsiteLayoutRule].self, forKey: .websiteRules) ?? []
+        self.spellingAutocorrectEnabled = try container.decodeIfPresent(Bool.self, forKey: .spellingAutocorrectEnabled) ?? true
     }
 
     public static func `default`() -> LayoutPilotConfiguration {
@@ -325,7 +330,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
                     profileID: us.id
                 )
             ],
-            websiteRules: []
+            websiteRules: [],
+            spellingAutocorrectEnabled: true
         )
     }
 }

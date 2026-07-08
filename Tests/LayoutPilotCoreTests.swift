@@ -709,6 +709,78 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "company.thebrowser.Browser"))
         XCTAssertFalse(BrowserURLService.isBrowser(bundleID: "com.apple.Terminal"))
     }
+
+    func testSpellingAutocorrectMisspelledCheck() {
+        let service = SmartInputService.shared
+        // Ensure spelling autocorrect is enabled
+        service.spellingAutocorrectEnabled = true
+        
+        // "teh" is misspelled in English
+        XCTAssertTrue(service.isMisspelled("teh", language: "en", layoutID: "com.apple.keylayout.US"))
+        // "the" is correct in English
+        XCTAssertFalse(service.isMisspelled("the", language: "en", layoutID: "com.apple.keylayout.US"))
+        
+        // Add "teh" to accepted words
+        let learningStore = SmartInputLearningStore.shared
+        for _ in 0..<3 {
+            _ = learningStore.recordAcceptedWord("teh", layoutID: "com.apple.keylayout.US", bundleID: "com.apple.Notes")
+        }
+        
+        // Now "teh" should not be considered misspelled
+        XCTAssertFalse(service.isMisspelled("teh", language: "en", layoutID: "com.apple.keylayout.US"))
+    }
+    
+    func testSpellingSuggestions() {
+        let service = SmartInputService.shared
+        let suggestions = service.suggestionsForWord("teh", language: "en")
+        XCTAssertFalse(suggestions.isEmpty)
+        XCTAssertTrue(suggestions.contains("the"))
+    }
+
+    func testBootstrapSpellingVocabularyFromLogs() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let learningURL = tempDirectory.appendingPathComponent("smart-input-learning.json")
+        let learningStore = SmartInputLearningStore(fileURL: learningURL)
+        
+        // Let's create a temporary event log
+        let logURL = try LayoutPilotPaths.smartInputEventLogURL()
+        try? FileManager.default.removeItem(at: logURL)
+        
+        let event = SmartInputEventLog.Event(
+            kind: "replacement",
+            mode: "bilingual",
+            original: "ghbdtn",
+            replacement: "привет"
+        )
+        let event2 = SmartInputEventLog.Event(
+            kind: "accepted_word_promoted",
+            original: "тестикслово"
+        )
+        
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        
+        var line1 = try encoder.encode(event)
+        line1.append(0x0A)
+        var line2 = try encoder.encode(event2)
+        line2.append(0x0A)
+        
+        try FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (line1 + line2).write(to: logURL)
+        
+        // Bootstrap
+        learningStore.bootstrapSpellingVocabularyFromLogs(checker: NSSpellChecker.shared)
+        
+        // "привет" is correct in Russian, so it shouldn't be added to acceptedWords
+        XCTAssertFalse(learningStore.isWordAccepted("привет"))
+        
+        // "тестикслово" is misspelled, so it should be bootstrapped and accepted!
+        XCTAssertTrue(learningStore.isWordAccepted("тестикслово"))
+        
+        // Cleanup log
+        try? FileManager.default.removeItem(at: logURL)
+    }
 }
 
 private final class FakeInputSourceClient: InputSourceClient {

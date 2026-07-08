@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSLog
 
@@ -226,6 +227,136 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         }
     }
 
+    public func isWordAccepted(_ word: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let normalized = Self.normalizedWord(word)
+        return state.acceptedWords.values.contains { $0.word == normalized && $0.count >= acceptedWordPromotionCount }
+    }
+
+    public func bootstrapSpellingVocabularyFromLogs(checker: NSSpellChecker) {
+        lock.lock()
+        let shouldBootstrap = !(state.bootstrappedSpellingVocabulary ?? false)
+        lock.unlock()
+
+        guard shouldBootstrap else { return }
+
+        // Read both log files
+        let logURLs: [URL]
+        do {
+            let primaryLog = try LayoutPilotPaths.smartInputEventLogURL()
+            let rotatedLog = primaryLog.deletingLastPathComponent().appendingPathComponent(primaryLog.lastPathComponent + ".1")
+            logURLs = [rotatedLog, primaryLog] // Read older rotated log first
+        } catch {
+            return
+        }
+
+        var uniqueWords = Set<String>()
+        let letterSet = CharacterSet.letters
+
+        for url in logURLs {
+            guard FileManager.default.fileExists(atPath: url.path),
+                  let text = try? String(contentsOf: url, encoding: .utf8) else {
+                continue
+            }
+            
+            let lines = text.split(separator: "\n")
+            for line in lines {
+                guard let data = line.data(using: .utf8),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    continue
+                }
+                
+                let fields = ["original", "replacement", "bufferBefore", "bufferAfter"]
+                for field in fields {
+                    if let val = dict[field] as? String {
+                        extractWords(from: val, into: &uniqueWords, letterSet: letterSet)
+                    }
+                }
+                if let val = dict["summary"] as? String {
+                    extractWords(from: val, into: &uniqueWords, letterSet: letterSet)
+                }
+            }
+        }
+
+        logger.info("Extracted \(uniqueWords.count) candidate words from logs. Verifying spelling...")
+
+        var addedCount = 0
+        
+        lock.lock()
+        for word in uniqueWords {
+            let normalized = Self.normalizedWord(word)
+            guard normalized.count >= 2 else { continue }
+            
+            let hasCyrillic = normalized.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
+            let hasLatin = normalized.unicodeScalars.contains { (97...122).contains($0.value) }
+            
+            let language: String
+            let layoutID: String?
+            if hasCyrillic && !hasLatin {
+                language = "ru"
+                layoutID = "com.apple.keylayout.RussianWin"
+            } else if hasLatin && !hasCyrillic {
+                language = "en"
+                layoutID = "com.apple.keylayout.US"
+            } else {
+                continue
+            }
+            
+            // Check if it's already accepted in our store with count >= 3
+            let key = Self.wordKey(word: normalized, layoutID: layoutID)
+            if let entry = state.acceptedWords[key], entry.count >= acceptedWordPromotionCount {
+                continue
+            }
+            
+            // Check if it is spelled correctly in macOS
+            var wordCount = 0
+            let range = checker.checkSpelling(
+                of: normalized,
+                startingAt: 0,
+                language: language,
+                wrap: false,
+                inSpellDocumentWithTag: 0,
+                wordCount: &wordCount
+            )
+            
+            let isMisspelled = range.location != NSNotFound
+            if isMisspelled {
+                var entry = state.acceptedWords[key] ?? AcceptedWordEntry(
+                    word: normalized,
+                    layoutID: layoutID,
+                    count: 0,
+                    firstSeen: Date(),
+                    lastSeen: Date(),
+                    bundleIDs: []
+                )
+                entry.count = max(entry.count, acceptedWordPromotionCount)
+                entry.lastSeen = Date()
+                state.acceptedWords[key] = entry
+                addedCount += 1
+            }
+        }
+        
+        state.bootstrappedSpellingVocabulary = true
+        saveLocked()
+        lock.unlock()
+
+        logger.info("Completed spelling bootstrap. Added \(addedCount) misspelled-but-user-approved words to local dictionary.")
+    }
+
+    private func extractWords(from text: String, into uniqueWords: inout Set<String>, letterSet: CharacterSet) {
+        let scanner = Scanner(string: text)
+        while !scanner.isAtEnd {
+            if let word = scanner.scanCharacters(from: letterSet) {
+                if word.count >= 2 {
+                    uniqueWords.insert(word.lowercased())
+                }
+            } else {
+                _ = scanner.scanUpToCharacters(from: letterSet)
+            }
+        }
+    }
+
     private func saveLocked() {
         do {
             try FileManager.default.createDirectory(
@@ -243,7 +374,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private static func wordKey(word: String, layoutID: String?) -> String {
+    public static func wordKey(word: String, layoutID: String?) -> String {
         [layoutID ?? "", word].joined(separator: "\u{1F}")
     }
 
@@ -266,6 +397,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
     private struct State: Codable {
         var version = 1
         var bootstrappedFromEventLog = false
+        var bootstrappedSpellingVocabulary: Bool? = false
         var acceptedWords: [String: AcceptedWordEntry] = [:]
         var conversions: [String: ConversionEntry] = [:]
     }

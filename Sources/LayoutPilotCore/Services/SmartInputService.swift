@@ -109,6 +109,109 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
+    // MARK: - Spelling Autocorrect properties
+    public var onShowSuggestions: (@Sendable (SpellingSuggestionContext) -> Void)?
+    public var onHideSuggestions: (@Sendable () -> Void)?
+
+    private var _spellingAutocorrectEnabled = true
+    public var spellingAutocorrectEnabled: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _spellingAutocorrectEnabled
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _spellingAutocorrectEnabled = newValue
+        }
+    }
+
+    private var _suggestionsActive = false
+    public var isSuggestionsActive: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _suggestionsActive
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _suggestionsActive = newValue
+        }
+    }
+
+    private var _activeSuggestions: [String] = []
+    private var activeSuggestions: [String] {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _activeSuggestions
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _activeSuggestions = newValue
+        }
+    }
+
+    private var _activeSelectCallback: (@Sendable (String) -> Void)?
+    private var activeSelectCallback: (@Sendable (String) -> Void)? {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _activeSelectCallback
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _activeSelectCallback = newValue
+        }
+    }
+
+    // MARK: - Thread-safe wrappers
+    private func getBufferToken() -> String {
+        lock.lock(); defer { lock.unlock() }
+        return buffer.token
+    }
+    
+    private func appendToBuffer(_ text: String) {
+        lock.lock(); defer { lock.unlock() }
+        buffer.append(text)
+    }
+    
+    private func resetBuffer() {
+        lock.lock(); defer { lock.unlock() }
+        buffer.reset()
+    }
+    
+    private func removeLastFromBuffer() {
+        lock.lock(); defer { lock.unlock() }
+        buffer.removeLast()
+    }
+
+    private func appendToContextHistory(_ word: String) {
+        lock.lock(); defer { lock.unlock() }
+        contextHistory.append(word)
+    }
+
+    private func resetContextHistory() {
+        lock.lock(); defer { lock.unlock() }
+        contextHistory.reset()
+    }
+
+    private func getContextHistoryWords() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return contextHistory.getWords()
+    }
+
+    private func getLastReplacement() -> LastReplacementInfo? {
+        lock.lock(); defer { lock.unlock() }
+        return _lastReplacement
+    }
+
+    private func setLastReplacement(_ info: LastReplacementInfo?) {
+        lock.lock(); defer { lock.unlock() }
+        _lastReplacement = info
+    }
+
+    private func deactivateLastReplacement() {
+        lock.lock(); defer { lock.unlock() }
+        _lastReplacement?.isActive = false
+    }
+
     private var _allowedBundleIDs = Set<String>()
     
     public var allowedBundleIDs: Set<String> {
@@ -252,7 +355,7 @@ public final class SmartInputService: @unchecked Sendable {
         var boundaryBackspaceConsumed: Bool
     }
 
-    private var lastReplacement: LastReplacementInfo?
+    private var _lastReplacement: LastReplacementInfo?
     
     private var eventTap: CFMachPort?
     private var isStarted = false
@@ -402,18 +505,26 @@ public final class SmartInputService: @unchecked Sendable {
 
         if shouldForceUSForSpotlight(keyCode: keyCode, flags: flags) {
             activatePreferredUSInputSource()
-            buffer.reset()
-            contextHistory.reset()
-            lastReplacement?.isActive = false
+            resetBuffer()
+            resetContextHistory()
+            deactivateLastReplacement()
+            if isSuggestionsActive {
+                isSuggestionsActive = false
+                onHideSuggestions?()
+            }
             return Unmanaged.passUnretained(event)
         }
 
         let activeBundleID = frontmostBundleID() ?? ""
         if shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: activeBundleID) {
             activatePreferredUSInputSource()
-            buffer.reset()
-            contextHistory.reset()
-            lastReplacement?.isActive = false
+            resetBuffer()
+            resetContextHistory()
+            deactivateLastReplacement()
+            if isSuggestionsActive {
+                isSuggestionsActive = false
+                onHideSuggestions?()
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -427,8 +538,48 @@ public final class SmartInputService: @unchecked Sendable {
             }
         }
 
+        // Intercept suggestions keys when panel is active
+        if isSuggestionsActive {
+            if keyCode == 53 { // Escape
+                isSuggestionsActive = false
+                onHideSuggestions?()
+                return nil // Swallow Escape to close the panel
+            }
+            
+            if flags.contains(.maskAlternate) {
+                var selectedIndex: Int? = nil
+                if keyCode == 18 { selectedIndex = 0 }      // ⌥1
+                else if keyCode == 19 { selectedIndex = 1 } // ⌥2
+                else if keyCode == 20 { selectedIndex = 2 } // ⌥3
+                else if keyCode == 21 { selectedIndex = 3 } // ⌥4
+                else if keyCode == 23 { selectedIndex = 4 } // ⌥5
+                
+                if let idx = selectedIndex {
+                    let suggs = activeSuggestions
+                    let callback = activeSelectCallback
+                    if idx < suggs.count {
+                        let selected = suggs[idx]
+                        isSuggestionsActive = false
+                        onHideSuggestions?()
+                        callback?(selected)
+                        return nil // Swallow hotkey
+                    }
+                }
+            }
+            
+            // Hide on any other key except Backspace (handled below)
+            if keyCode != 51 {
+                isSuggestionsActive = false
+                onHideSuggestions?()
+            }
+        }
+
         if keyCode == 51 { // Backspace / Delete
-            if let last = lastReplacement, last.isActive {
+            if isSuggestionsActive {
+                isSuggestionsActive = false
+                onHideSuggestions?()
+            }
+            if let last = getLastReplacement(), last.isActive {
                 let elapsed = Date().timeIntervalSince(last.timestamp)
                 if elapsed <= _smartBilingualUndoDelay {
                     if !last.boundary.isEmpty, !last.boundaryBackspaceConsumed {
@@ -443,7 +594,7 @@ public final class SmartInputService: @unchecked Sendable {
                     )
                     return nil // Swallow event.
                 } else {
-                    lastReplacement?.isActive = false
+                    deactivateLastReplacement()
                     if last.boundary.isEmpty || last.boundaryBackspaceConsumed {
                         recordRejectedConversionIfNeeded(last)
                         SmartInputEventLog.shared.record(.init(
@@ -457,7 +608,7 @@ public final class SmartInputService: @unchecked Sendable {
                             replacement: last.replacement,
                             boundary: last.boundary,
                             keyCode: keyCode,
-                            bufferBefore: buffer.token,
+                            bufferBefore: getBufferToken(),
                             elapsedSinceReplacement: elapsed,
                             replacementAgeLimit: _smartBilingualUndoDelay,
                             suppressionReason: "learned_user_rejection"
@@ -465,9 +616,10 @@ public final class SmartInputService: @unchecked Sendable {
                     }
                 }
             }
-            let bufferBefore = buffer.token
-            buffer.removeLast()
-            if bufferBefore != buffer.token {
+            let bufferBefore = getBufferToken()
+            removeLastFromBuffer()
+            let bufferAfter = getBufferToken()
+            if bufferBefore != bufferAfter {
                 SmartInputEventLog.shared.record(.init(
                     kind: "backspace_buffer_update",
                     reason: "removed last buffered character",
@@ -475,34 +627,34 @@ public final class SmartInputService: @unchecked Sendable {
                     sourceLayoutID: currentInputSourceID(),
                     keyCode: keyCode,
                     bufferBefore: bufferBefore,
-                    bufferAfter: buffer.token
+                    bufferAfter: bufferAfter
                 ))
             }
             return Unmanaged.passUnretained(event)
         } else if keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126 || keyCode == 53 || keyCode == 48 || keyCode == 36 {
             // Arrow keys (123-126), Escape (53), Tab (48), Return (36)
-            buffer.reset()
-            contextHistory.reset()
-            lastReplacement?.isActive = false
+            resetBuffer()
+            resetContextHistory()
+            deactivateLastReplacement()
         } else {
-            lastReplacement?.isActive = false
+            deactivateLastReplacement()
         }
 
         guard isEnabled || smartBilingualEnabled || textSnippetsEnabled else {
-            buffer.reset()
-            contextHistory.reset()
+            resetBuffer()
+            resetContextHistory()
             return Unmanaged.passUnretained(event)
         }
         
         guard shouldHandleCurrentContext() else {
-            buffer.reset()
-            contextHistory.reset()
+            resetBuffer()
+            resetContextHistory()
             return Unmanaged.passUnretained(event)
         }
         
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
-            buffer.reset()
-            contextHistory.reset()
+            resetBuffer()
+            resetContextHistory()
             return Unmanaged.passUnretained(event)
         }
         
@@ -511,19 +663,22 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         let snippetsAllowed = isTextSnippetsAllowed(for: activeBundleID)
+        let bufferToken = getBufferToken()
 
-        if snippetsAllowed, isSnippetTriggerContinuation(buffer.token + text) {
-            buffer.append(text)
+        if snippetsAllowed, isSnippetTriggerContinuation(bufferToken + text) {
+            appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
         
         if isBoundary(text) {
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
             let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
+            let sourceID = currentInputSourceID()
 
+            // 1. Text snippets expansion (no spelling check on snippets)
             if snippetsAllowed,
-               let snippet = textSnippet(for: buffer.token) {
-                let originalToken = buffer.token
+               let snippet = textSnippet(for: bufferToken) {
+                let originalToken = bufferToken
                 replaceToken(with: snippet.replacement, boundary: text)
                 recordReplacementForUndo(
                     mode: "snippet",
@@ -532,126 +687,222 @@ public final class SmartInputService: @unchecked Sendable {
                     replacement: snippet.replacement,
                     boundary: text,
                     bundleID: activeBundleID,
-                    originalLayoutID: currentInputSourceID(),
+                    originalLayoutID: sourceID,
                     targetLayoutID: nil,
-                    contextBefore: contextHistory.getWords()
+                    contextBefore: getContextHistoryWords()
                 )
                 return nil
             }
 
-            if isDanishAllowed,
-               let sourceID = currentInputSourceID(),
-               usInputSources.contains(sourceID),
-               let replacement = replacementForCurrentToken() {
-                let originalToken = buffer.token
-                replaceToken(with: replacement, boundary: text)
-                recordReplacementForUndo(
-                    mode: "danish",
-                    reason: "valid Danish boundary replacement",
-                    original: originalToken,
-                    replacement: replacement,
-                    boundary: text,
-                    bundleID: activeBundleID,
-                    originalLayoutID: sourceID,
-                    targetLayoutID: nil,
-                    contextBefore: contextHistory.getWords()
-                )
-                return nil
-            }
+            // Perform logical conversion / healing
+            var healedWord: String? = nil
+            var conversionMode: String? = nil
+            var conversionReason: String? = nil
+            var targetLayoutID: String? = nil
+            var detectedLanguage: String? = nil
             
-            if smartBilingualEnabled,
-               isBilingualAllowed,
-               let sourceID = currentInputSourceID(),
-               let correctedToken = capitalizationCorrection(for: buffer.token, sourceLayoutID: sourceID) {
-                let originalToken = buffer.token
-                let contextBefore = contextHistory.getWords()
-
-                replaceToken(with: correctedToken, boundary: text)
-
-                recordReplacementForUndo(
-                    mode: "capitalization",
-                    reason: "corrected accidental double initial uppercase",
-                    original: originalToken,
-                    replacement: correctedToken,
-                    boundary: text,
-                    bundleID: activeBundleID,
-                    originalLayoutID: sourceID,
-                    targetLayoutID: nil,
-                    contextBefore: contextBefore
-                )
-
-                contextHistory.append(correctedToken)
-                return nil
+            // Check Danish replacement
+            if isDanishAllowed,
+               let sourceID,
+               usInputSources.contains(sourceID),
+               let replacement = replacementForToken(bufferToken) {
+                healedWord = replacement
+                conversionMode = "danish"
+                conversionReason = "valid Danish boundary replacement"
+                detectedLanguage = "da"
             }
-
-            if smartBilingualEnabled,
-               isBilingualAllowed,
-               let bilingualResult = checkBilingualConversion(
-                   for: buffer.token,
-                   bundleID: activeBundleID,
-                   logSuppression: true
-               ) {
-                let originalLayoutID = currentInputSourceID()
-                let originalToken = buffer.token
-                let contextBefore = contextHistory.getWords()
+            // Check Capitalization Correction
+            else if smartBilingualEnabled,
+                    isBilingualAllowed,
+                    let sourceID,
+                    let correctedToken = capitalizationCorrection(for: bufferToken, sourceLayoutID: sourceID) {
+                healedWord = correctedToken
+                conversionMode = "capitalization"
+                conversionReason = "corrected accidental double initial uppercase"
+                detectedLanguage = detectLanguage(of: correctedToken) == .russian ? "ru" : "en"
+            }
+            // Check Bilingual Layout Conversion
+            else if smartBilingualEnabled,
+                    isBilingualAllowed,
+                    let sourceID,
+                    let bilingualResult = checkBilingualConversion(
+                        for: bufferToken,
+                        bundleID: activeBundleID,
+                        logSuppression: true
+                    ) {
+                healedWord = bilingualResult.replacement
+                conversionMode = "bilingual"
+                conversionReason = "converted token is more likely in opposing layout"
+                targetLayoutID = bilingualResult.targetLayoutID
                 
                 let (_, russianLayoutID) = findLayouts()
-                let isToRussian = (bilingualResult.targetLayoutID == russianLayoutID)
-                let convertedBoundary: String
-                if isToRussian {
-                    convertedBoundary = translateEnglishToRussian(text)
+                detectedLanguage = (bilingualResult.targetLayoutID == russianLayoutID) ? "ru" : "en"
+            }
+            
+            let wordToCheck = healedWord ?? bufferToken
+            let originalToken = bufferToken
+            
+            // Determine language for spell check
+            if detectedLanguage == nil {
+                let lang = detectLanguage(of: wordToCheck)
+                if lang == .russian {
+                    detectedLanguage = "ru"
+                } else if lang == .english {
+                    detectedLanguage = "en"
+                } else if let sourceID {
+                    detectedLanguage = sourceID.localizedCaseInsensitiveContains("Russian") ||
+                                       sourceID.hasSuffix(".ru") ||
+                                       sourceID.contains(".ru.") ||
+                                       sourceID == "ru" ? "ru" : "en"
                 } else {
-                    convertedBoundary = translateRussianToEnglish(text)
+                    detectedLanguage = "en"
+                }
+            }
+            
+            // Run spelling autocorrection check
+            var finalWord = wordToCheck
+            var spellingApplied = false
+            var spellingSuggestions: [String] = []
+            
+            if spellingAutocorrectEnabled,
+               !wordToCheck.isEmpty,
+               let lang = detectedLanguage,
+               isMisspelled(wordToCheck, language: lang, layoutID: sourceID) {
+                
+                let guesses = suggestionsForWord(wordToCheck, language: lang)
+                if !guesses.isEmpty {
+                    spellingSuggestions = guesses
+                    finalWord = guesses[0]
+                    spellingApplied = true
+                }
+            }
+            
+            // Perform actual replacement
+            if conversionMode != nil || spellingApplied {
+                let contextBefore = getContextHistoryWords()
+                
+                var convertedBoundary = text
+                if conversionMode == "bilingual", let targetLayoutID {
+                    let (_, russianLayoutID) = findLayouts()
+                    if targetLayoutID == russianLayoutID {
+                        convertedBoundary = translateEnglishToRussian(text)
+                    } else {
+                        convertedBoundary = translateRussianToEnglish(text)
+                    }
                 }
                 
-                replaceToken(with: bilingualResult.replacement, boundary: convertedBoundary)
+                replaceToken(with: finalWord, boundary: convertedBoundary)
+                
+                let mode = spellingApplied ? "spelling" : (conversionMode ?? "unknown")
+                let reason = spellingApplied 
+                    ? "spelling auto-corrected '\(wordToCheck)' to '\(finalWord)' after \(conversionMode ?? "no") conversion"
+                    : (conversionReason ?? "")
                 
                 recordReplacementForUndo(
-                    mode: "bilingual",
-                    reason: "converted token is more likely in opposing layout",
+                    mode: mode,
+                    reason: reason,
                     original: originalToken,
-                    replacement: bilingualResult.replacement,
+                    replacement: finalWord,
                     boundary: convertedBoundary,
                     bundleID: activeBundleID,
-                    originalLayoutID: originalLayoutID,
-                    targetLayoutID: bilingualResult.targetLayoutID,
+                    originalLayoutID: sourceID,
+                    targetLayoutID: targetLayoutID,
                     contextBefore: contextBefore
                 )
                 
-                contextHistory.append(bilingualResult.replacement)
+                appendToContextHistory(finalWord)
                 
-                if let targetLayoutID = bilingualResult.targetLayoutID {
-                    if shouldSwitchLayout(to: targetLayoutID, replacement: bilingualResult.replacement) {
+                if let targetLayoutID {
+                    if shouldSwitchLayout(to: targetLayoutID, replacement: finalWord) {
                         DispatchQueue.main.async {
                             try? SystemInputSourceClient().activateInputSource(withID: targetLayoutID)
                         }
                     }
                 }
+                
+                if spellingApplied {
+                    let finalConvertedBoundary = convertedBoundary
+                    let originalLanguage = detectedLanguage ?? "en"
+                    
+                    // Show Suggestions UI
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        
+                        // We also provide the original word as a choice to revert!
+                        // Put original word at the very end of active suggestions
+                        var suggList = spellingSuggestions
+                        if !suggList.contains(originalToken) {
+                            suggList.append(originalToken)
+                        }
+                        
+                        self.activeSuggestions = suggList
+                        self.activeSelectCallback = { [weak self] selectedWord in
+                            guard let self else { return }
+                            self.replaceAutoCorrectedWord(
+                                original: originalToken,
+                                autocorrected: finalWord,
+                                replacement: selectedWord,
+                                boundary: finalConvertedBoundary
+                            )
+                            if selectedWord == originalToken {
+                                self.learningStore.recordRejectedConversion(
+                                    mode: "spelling",
+                                    original: originalToken,
+                                    replacement: finalWord,
+                                    sourceLayoutID: sourceID,
+                                    targetLayoutID: nil,
+                                    bundleID: activeBundleID
+                                )
+                            } else {
+                                self.recordAcceptedTypedWord(selectedWord, layoutID: sourceID, bundleID: activeBundleID)
+                            }
+                        }
+                        
+                        let context = SpellingSuggestionContext(
+                            originalWord: originalToken,
+                            suggestions: suggList,
+                            selectCallback: self.activeSelectCallback!
+                        )
+                        self.isSuggestionsActive = true
+                        self.onShowSuggestions?(context)
+                    }
+                } else {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.isSuggestionsActive = false
+                        self?.onHideSuggestions?()
+                    }
+                }
+                
                 return nil
             }
             
-            if !buffer.token.isEmpty {
+            if !bufferToken.isEmpty {
                 recordAcceptedTypedWord(
-                    buffer.token,
-                    layoutID: currentInputSourceID(),
+                    bufferToken,
+                    layoutID: sourceID,
                     bundleID: activeBundleID
                 )
             }
-            buffer.reset()
+            resetBuffer()
+            DispatchQueue.main.async { [weak self] in
+                self?.isSuggestionsActive = false
+                self?.onHideSuggestions?()
+            }
             return Unmanaged.passUnretained(event)
         }
         
         if let character = text.first, isWordCharacter(character) {
-            buffer.append(text)
+            appendToBuffer(text)
             
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
+            let updatedBufferToken = getBufferToken()
 
             if isDanishAllowed,
                let sourceID = currentInputSourceID(),
                usInputSources.contains(sourceID),
-               (triggerMap.keys.contains(character) || startsWithTrigger(buffer.token)),
-               let replacement = replacementForCurrentToken() {
-                let originalToken = buffer.token
+               (triggerMap.keys.contains(character) || startsWithTrigger(updatedBufferToken)),
+               let replacement = replacementForToken(updatedBufferToken) {
+                let originalToken = updatedBufferToken
                 replacePendingToken(with: replacement)
                 recordReplacementForUndo(
                     mode: "danish",
@@ -662,14 +913,14 @@ public final class SmartInputService: @unchecked Sendable {
                     bundleID: activeBundleID,
                     originalLayoutID: sourceID,
                     targetLayoutID: nil,
-                    contextBefore: contextHistory.getWords()
+                    contextBefore: getContextHistoryWords()
                 )
                 return nil
             }
             return Unmanaged.passUnretained(event)
         }
         
-        buffer.reset()
+        resetBuffer()
         return Unmanaged.passUnretained(event)
     }
 
@@ -1393,7 +1644,7 @@ public final class SmartInputService: @unchecked Sendable {
         targetLayoutID: String?,
         contextBefore: [String]
     ) {
-        lastReplacement = LastReplacementInfo(
+        _lastReplacement = LastReplacementInfo(
             mode: mode,
             reason: reason,
             original: original,
@@ -1430,7 +1681,7 @@ public final class SmartInputService: @unchecked Sendable {
         var updated = last
         updated.boundaryBackspaceConsumed = true
         updated.timestamp = Date()
-        lastReplacement = updated
+        _lastReplacement = updated
 
         SmartInputEventLog.shared.record(.init(
             kind: "replacement_boundary_backspace",
@@ -1443,7 +1694,7 @@ public final class SmartInputService: @unchecked Sendable {
             replacement: last.replacement,
             boundary: last.boundary,
             keyCode: keyCode,
-            bufferBefore: buffer.token,
+            bufferBefore: getBufferToken(),
             elapsedSinceReplacement: elapsed,
             replacementAgeLimit: _smartBilingualUndoDelay
         ))
@@ -1455,7 +1706,7 @@ public final class SmartInputService: @unchecked Sendable {
         keyCode: Int64,
         deleteBoundary: Bool
     ) {
-        lastReplacement?.isActive = false
+        deactivateLastReplacement()
         recordRejectedConversionIfNeeded(last)
         
         let charsToDeleteCount = last.replacement.count + (deleteBoundary ? last.boundary.count : 0)
@@ -1543,5 +1794,78 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         return false
+    }
+
+    // MARK: - Spelling Autocorrect helpers
+    
+    public func isMisspelled(_ word: String, language: String, layoutID: String?) -> Bool {
+        if word.count <= 1 {
+            return false
+        }
+        
+        let normalized = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        
+        // 1. Check if word is accepted in our learning store
+        if learningStore.isWordAccepted(normalized) {
+            return false
+        }
+        
+        // 2. Check common short words list
+        if language == "en" && commonEnglishShortWords.contains(normalized) {
+            return false
+        }
+        if language == "ru" && commonRussianShortWords.contains(normalized) {
+            return false
+        }
+        
+        // 3. Check spell checker
+        let range = checker.checkSpelling(
+            of: word,
+            startingAt: 0,
+            language: language,
+            wrap: false,
+            inSpellDocumentWithTag: 0,
+            wordCount: nil
+        )
+        return range.location != NSNotFound
+    }
+    
+    public func suggestionsForWord(_ word: String, language: String) -> [String] {
+        let range = NSRange(location: 0, length: word.utf16.count)
+        return checker.guesses(forWordRange: range, in: word, language: language, inSpellDocumentWithTag: 0) ?? []
+    }
+    
+    private func replaceAutoCorrectedWord(original: String, autocorrected: String, replacement: String, boundary: String) {
+        let charsToDeleteCount = autocorrected.count + boundary.count
+        for _ in 0..<charsToDeleteCount {
+            postKey(51) // Backspace
+        }
+        postText(replacement + boundary)
+        
+        if let last = getLastReplacement() {
+            recordReplacementForUndo(
+                mode: last.mode,
+                reason: "user selected alternative suggestion '\(replacement)'",
+                original: original,
+                replacement: replacement,
+                boundary: boundary,
+                bundleID: last.bundleID,
+                originalLayoutID: last.originalLayoutID,
+                targetLayoutID: last.targetLayoutID,
+                contextBefore: getContextHistoryWords()
+            )
+        }
+    }
+}
+
+public struct SpellingSuggestionContext: Sendable {
+    public let originalWord: String
+    public let suggestions: [String]
+    public let selectCallback: @Sendable (String) -> Void
+    
+    public init(originalWord: String, suggestions: [String], selectCallback: @escaping @Sendable (String) -> Void) {
+        self.originalWord = originalWord
+        self.suggestions = suggestions
+        self.selectCallback = selectCallback
     }
 }

@@ -163,4 +163,41 @@ public enum AXFocusInspector {
         if let number = ref as? NSNumber { return number.stringValue }
         return nil
     }
+
+    public static func getCaretRect() -> CGRect? {
+        guard AXIsProcessTrusted() else { return nil }
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focusedRef,
+              CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        let element = focusedRef as! AXUIElement
+        
+        var boundsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXSelectedTextBounds" as CFString, &boundsRef) == .success,
+              let boundsRef,
+              CFGetTypeID(boundsRef) == AXValueGetTypeID() else {
+            return nil
+        }
+        let axValue = boundsRef as! AXValue
+        
+        var rect = CGRect.zero
+        if AXValueGetValue(axValue, .cgRect, &rect) {
+            return rect
+        }
+        return nil
+    }
+
+    public static func getCaretScreenPoint() -> NSPoint? {
+        guard let caretRect = getCaretRect() else { return nil }
+        
+        let primaryScreen = NSScreen.screens.first ?? NSScreen.main
+        guard let screenHeight = primaryScreen?.frame.size.height else { return nil }
+        
+        let x = caretRect.origin.x
+        let y = screenHeight - (caretRect.origin.y + caretRect.size.height)
+        return NSPoint(x: x, y: y)
+    }
 }

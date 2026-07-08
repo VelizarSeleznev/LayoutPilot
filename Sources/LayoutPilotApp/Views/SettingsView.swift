@@ -27,6 +27,11 @@ struct SettingsView: View {
                     set: { appState.store.setSmartBilingualEnabled($0) }
                 ))
 
+                Toggle("Spelling Autocorrect", isOn: Binding(
+                    get: { appState.store.configuration.spellingAutocorrectEnabled },
+                    set: { appState.store.setSpellingAutocorrectEnabled($0) }
+                ))
+
                 Toggle("Text Snippets", isOn: Binding(
                     get: { appState.store.configuration.textSnippetsEnabled },
                     set: { appState.store.setTextSnippetsEnabled($0) }

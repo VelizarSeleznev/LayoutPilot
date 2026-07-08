@@ -1,3 +1,5 @@
+import AppKit
+import Foundation
 import LayoutPilotCore
 import Observation
 
@@ -30,6 +32,23 @@ final class LayoutPilotAppState {
             Task { @MainActor in RewriteService.shared.run() }
         }
 
+        // Suggestions panel callbacks
+        SmartInputService.shared.onShowSuggestions = { @Sendable context in
+            Task { @MainActor in
+                SuggestionsPanel.shared.show(context: context)
+            }
+        }
+        SmartInputService.shared.onHideSuggestions = { @Sendable in
+            Task { @MainActor in
+                SuggestionsPanel.shared.hide()
+            }
+        }
+
+        // Run log spelling bootstrap on a background thread
+        DispatchQueue.global(qos: .background).async {
+            SmartInputLearningStore.shared.bootstrapSpellingVocabularyFromLogs(checker: NSSpellChecker.shared)
+        }
+
         SmartInputService.shared.start()
     }
 
@@ -48,5 +67,6 @@ final class LayoutPilotAppState {
         SmartInputService.shared.danishApplyToAll = configuration.smartDanishApplyToAll
         SmartInputService.shared.textSnippetsEnabled = configuration.textSnippetsEnabled
         SmartInputService.shared.textSnippets = configuration.textSnippets
+        SmartInputService.shared.spellingAutocorrectEnabled = configuration.spellingAutocorrectEnabled
     }
 }
