@@ -30,6 +30,12 @@ struct ContentView: View {
         .onDisappear {
             NSApp.setActivationPolicy(.accessory)
         }
+        .onChange(of: appState.selectedSidebarSection) { _, newValue in
+            if let newValue {
+                sidebarSelectionRaw = newValue.rawValue
+                appState.selectedSidebarSection = nil
+            }
+        }
     }
 
     private var sidebarSelectionBinding: Binding<SidebarSection> {

@@ -20,6 +20,12 @@ struct MenuBarView: View {
             activeApplicationHeader
             activeApplicationControls
 
+            if let domain = appState.engine.activeWebsiteDomain {
+                Divider()
+                activeWebsiteHeader(domain: domain)
+                activeWebsiteControls(domain: domain)
+            }
+
             Divider()
 
             Toggle("Auto-switching", isOn: Binding(
@@ -101,7 +107,7 @@ struct MenuBarView: View {
     }
 
     private var footerActions: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Button {
                 NSLog("[Menu] Dashboard tapped")
                 NSApp.activate(ignoringOtherApps: true)
@@ -109,6 +115,15 @@ struct MenuBarView: View {
                 NSLog("[Menu] Dashboard openWindow called")
             } label: {
                 Label("Dashboard", systemImage: "rectangle.stack")
+            }
+
+            Button {
+                NSLog("[Menu] Website Rules tapped")
+                appState.selectedSidebarSection = .websites
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "main")
+            } label: {
+                Label("Websites", systemImage: "globe")
             }
 
             Spacer()
@@ -261,5 +276,89 @@ struct MenuBarView: View {
         }
 
         return String(applicationName.prefix(maximumLength - 3)) + "..."
+    }
+
+    private func activeWebsiteHeader(domain: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "globe")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 32, height: 32)
+                .foregroundStyle(.blue)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(domain)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(websiteStatusText(for: domain))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+    }
+
+    private func activeWebsiteControls(domain: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Layout", selection: Binding(
+                get: { websiteRuleSelection(for: domain) },
+                set: { setWebsiteRuleSelection($0, for: domain) }
+            )) {
+                Text("None (Use App Default)").tag("none")
+                ForEach(appState.store.configuration.profiles) { profile in
+                    Text(profile.name).tag(profile.id.uuidString)
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+        }
+    }
+
+    private func matchedWebsiteRule(for domain: String) -> WebsiteLayoutRule? {
+        appState.store.configuration.websiteRules.first { rule in
+            domain == rule.domain || domain.hasSuffix("." + rule.domain)
+        }
+    }
+
+    private func websiteStatusText(for domain: String) -> String {
+        guard appState.store.configuration.automationEnabled else {
+            return "Auto-switching off"
+        }
+        if let rule = matchedWebsiteRule(for: domain), rule.isEnabled {
+            let profileName = appState.store.profile(for: rule.profileID)?.name ?? "Unknown Layout"
+            return "Auto: \(profileName)"
+        }
+        return "Using app default"
+    }
+
+    private func websiteRuleSelection(for domain: String) -> String {
+        guard let rule = matchedWebsiteRule(for: domain), rule.isEnabled else {
+            return "none"
+        }
+        return rule.profileID.uuidString
+    }
+
+    private func setWebsiteRuleSelection(_ selection: String, for domain: String) {
+        if selection == "none" {
+            if let rule = matchedWebsiteRule(for: domain) {
+                appState.store.deleteWebsiteRule(id: rule.id)
+                appState.engine.refreshNow()
+            }
+            return
+        }
+
+        guard let profileID = UUID(uuidString: selection) else { return }
+
+        if var rule = matchedWebsiteRule(for: domain) {
+            rule.profileID = profileID
+            rule.isEnabled = true
+            appState.store.upsertWebsiteRule(rule)
+        } else {
+            let rule = WebsiteLayoutRule(domain: domain, profileID: profileID, isEnabled: true)
+            appState.store.upsertWebsiteRule(rule)
+        }
+        appState.engine.refreshNow()
     }
 }

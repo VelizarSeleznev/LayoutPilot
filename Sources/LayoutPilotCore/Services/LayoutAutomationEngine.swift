@@ -9,6 +9,7 @@ public final class LayoutAutomationEngine {
     public private(set) var recentApplications: [RecentApplicationContext] = []
     public private(set) var isRunning = false
     public private(set) var lastErrorMessage: String?
+    public private(set) var activeWebsiteDomain: String?
 
     nonisolated static let recentApplicationLimit = 3
 
@@ -97,6 +98,7 @@ public final class LayoutAutomationEngine {
         
         let didWebsiteChange = activeWebsiteDomain != previousWebsiteDomain
         previousWebsiteDomain = activeWebsiteDomain
+        self.activeWebsiteDomain = activeWebsiteDomain
 
         let shouldRestoreLastUsedInputSource = rememberLastUsedInputSource(
             currentSourceID,

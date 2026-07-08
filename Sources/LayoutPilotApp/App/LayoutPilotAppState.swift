@@ -9,6 +9,7 @@ final class LayoutPilotAppState {
     let store: LayoutPilotStore
     let engine: LayoutAutomationEngine
     var launchAtLoginState: LaunchAtLoginService.State
+    var selectedSidebarSection: SidebarSection?
 
     init() {
         self.store = LayoutPilotStore()
