@@ -711,7 +711,11 @@ final class LayoutPilotCoreTests: XCTestCase {
     }
 
     func testSpellingAutocorrectMisspelledCheck() {
-        let service = SmartInputService.shared
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let learningURL = tempDirectory.appendingPathComponent("learning.json")
+        let learningStore = SmartInputLearningStore(fileURL: learningURL)
+        let service = SmartInputService(learningStore: learningStore)
+        
         // Ensure spelling autocorrect is enabled
         service.spellingAutocorrectEnabled = true
         
@@ -721,7 +725,6 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(service.isMisspelled("the", language: "en", layoutID: "com.apple.keylayout.US"))
         
         // Add "teh" to accepted words
-        let learningStore = SmartInputLearningStore.shared
         for _ in 0..<3 {
             _ = learningStore.recordAcceptedWord("teh", layoutID: "com.apple.keylayout.US", bundleID: "com.apple.Notes")
         }

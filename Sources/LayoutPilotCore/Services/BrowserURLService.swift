@@ -4,6 +4,12 @@ import Foundation
 
 public enum BrowserURLService {
     public static func activeURL(for app: NSRunningApplication) -> String? {
+        guard let bundleID = app.bundleIdentifier else { return nil }
+        
+        if let url = getURLUsingAppleScript(bundleID: bundleID) {
+            return url
+        }
+        
         guard AXIsProcessTrusted() else { return nil }
         
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
@@ -13,13 +19,35 @@ public enum BrowserURLService {
         }
         let window = windowRef as! AXUIElement
         
-        if app.bundleIdentifier == "com.apple.Safari" {
+        if bundleID == "com.apple.Safari" {
             return getSafariURL(window)
-        } else if isChromiumOrFirefox(app.bundleIdentifier) {
+        } else if isChromiumOrFirefox(bundleID) {
             return getChromiumOrFirefoxURL(window)
         }
         
         return nil
+    }
+    
+    private static func getURLUsingAppleScript(bundleID: String) -> String? {
+        let scriptSource: String
+        if bundleID == "com.apple.Safari" {
+            scriptSource = "tell application id \"\(bundleID)\" to return URL of front document"
+        } else if bundleID == "com.google.Chrome" ||
+                    bundleID == "company.thebrowser.Browser" ||
+                    bundleID == "com.microsoft.edgemac" ||
+                    bundleID == "com.brave.Browser" {
+            scriptSource = "tell application id \"\(bundleID)\" to return URL of active tab of front window"
+        } else {
+            return nil
+        }
+        
+        guard let script = NSAppleScript(source: scriptSource) else { return nil }
+        var errorInfo: NSDictionary?
+        let result = script.executeAndReturnError(&errorInfo)
+        if errorInfo != nil {
+            return nil
+        }
+        return result.stringValue
     }
     
     public static func isBrowser(bundleID: String) -> Bool {
