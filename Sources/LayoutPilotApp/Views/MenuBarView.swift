@@ -35,6 +35,13 @@ struct MenuBarView: View {
             .toggleStyle(.switch)
             .controlSize(.small)
 
+            Toggle("Spelling Autocorrect", isOn: Binding(
+                get: { appState.store.configuration.spellingAutocorrectEnabled },
+                set: { appState.store.setSpellingAutocorrectEnabled($0) }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
             Toggle("AX Inspector", isOn: Binding(
                 get: { inspector.isVisible },
                 set: { _ in inspector.toggle() }
@@ -124,6 +131,14 @@ struct MenuBarView: View {
                 openWindow(id: "main")
             } label: {
                 Label("Websites", systemImage: "globe")
+            }
+
+            Button {
+                NSLog("[Menu] Settings tapped")
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            } label: {
+                Label("Settings", systemImage: "gearshape")
             }
 
             Spacer()
