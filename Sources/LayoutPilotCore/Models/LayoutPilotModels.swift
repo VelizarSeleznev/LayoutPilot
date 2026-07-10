@@ -364,15 +364,20 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
     case websites
     case profiles
     case snippets
+    case settings
     case chat
     case diagnostics
 
     public var id: String { rawValue }
 
+    public static var visibleCases: [SidebarSection] {
+        [.overview, .rules, .websites, .profiles, .snippets, .settings]
+    }
+
     public var title: String {
         switch self {
         case .overview:
-            return "Overview"
+            return "Home"
         case .rules:
             return "Applications"
         case .websites:
@@ -381,6 +386,8 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "Input Profiles"
         case .snippets:
             return "Snippets"
+        case .settings:
+            return "Settings"
         case .chat:
             return "LLM Chat (Test)"
         case .diagnostics:
@@ -400,6 +407,8 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "keyboard"
         case .snippets:
             return "text.badge.plus"
+        case .settings:
+            return "gearshape"
         case .chat:
             return "bubble.left.and.bubble.right"
         case .diagnostics:

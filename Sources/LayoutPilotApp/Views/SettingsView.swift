@@ -5,46 +5,55 @@ struct SettingsView: View {
     @Bindable var appState: LayoutPilotAppState
 
     var body: some View {
-        TabView {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Settings")
+                    .font(.largeTitle.weight(.semibold))
+                Text("Choose how LayoutPilot behaves across your Mac.")
+                    .foregroundStyle(.secondary)
+            }
+
             Form {
-                Toggle("Automation enabled", isOn: Binding(
-                    get: { appState.store.configuration.automationEnabled },
-                    set: { appState.store.setAutomationEnabled($0) }
-                ))
+                Section("General") {
+                    Toggle("Automatic switching", isOn: Binding(
+                        get: { appState.store.configuration.automationEnabled },
+                        set: { appState.store.setAutomationEnabled($0) }
+                    ))
 
-                Toggle("Show menu bar item", isOn: Binding(
-                    get: { appState.store.configuration.showMenuBarItem },
-                    set: { appState.store.setShowMenuBarItem($0) }
-                ))
+                    Toggle("Show menu bar item", isOn: Binding(
+                        get: { appState.store.configuration.showMenuBarItem },
+                        set: { appState.store.setShowMenuBarItem($0) }
+                    ))
 
-                Toggle("Smart Danish Input", isOn: Binding(
-                    get: { appState.store.configuration.smartDanishInputEnabled },
-                    set: { appState.store.setSmartDanishInputEnabled($0) }
-                ))
+                    Toggle("Smart Danish Input", isOn: Binding(
+                        get: { appState.store.configuration.smartDanishInputEnabled },
+                        set: { appState.store.setSmartDanishInputEnabled($0) }
+                    ))
 
-                Toggle("Smart RU/EN Input", isOn: Binding(
-                    get: { appState.store.configuration.smartBilingualEnabled },
-                    set: { appState.store.setSmartBilingualEnabled($0) }
-                ))
+                    Toggle("Smart RU/EN Input", isOn: Binding(
+                        get: { appState.store.configuration.smartBilingualEnabled },
+                        set: { appState.store.setSmartBilingualEnabled($0) }
+                    ))
 
-                Toggle("Spelling Autocorrect", isOn: Binding(
-                    get: { appState.store.configuration.spellingAutocorrectEnabled },
-                    set: { appState.store.setSpellingAutocorrectEnabled($0) }
-                ))
+                    Toggle("Spelling Autocorrect", isOn: Binding(
+                        get: { appState.store.configuration.spellingAutocorrectEnabled },
+                        set: { appState.store.setSpellingAutocorrectEnabled($0) }
+                    ))
 
-                Toggle("Text Snippets", isOn: Binding(
-                    get: { appState.store.configuration.textSnippetsEnabled },
-                    set: { appState.store.setTextSnippetsEnabled($0) }
-                ))
+                    Toggle("Text Snippets", isOn: Binding(
+                        get: { appState.store.configuration.textSnippetsEnabled },
+                        set: { appState.store.setTextSnippetsEnabled($0) }
+                    ))
 
-                if appState.store.configuration.smartBilingualEnabled {
-                    Stepper(value: Binding(
-                        get: { appState.store.configuration.smartBilingualUndoDelay },
-                        set: { appState.store.setSmartBilingualUndoDelay($0) }
-                    ), in: 0.5...5.0, step: 0.1) {
-                        Text(String(format: "Undo delay: %.1f seconds", appState.store.configuration.smartBilingualUndoDelay))
+                    if appState.store.configuration.smartBilingualEnabled {
+                        Stepper(value: Binding(
+                            get: { appState.store.configuration.smartBilingualUndoDelay },
+                            set: { appState.store.setSmartBilingualUndoDelay($0) }
+                        ), in: 0.5...5.0, step: 0.1) {
+                            Text(String(format: "Undo delay: %.1f seconds", appState.store.configuration.smartBilingualUndoDelay))
+                        }
+                        .padding(.leading, 16)
                     }
-                    .padding(.leading, 16)
                 }
 
                 Section("Defaults for all apps") {
@@ -84,36 +93,36 @@ struct SettingsView: View {
                     .disabled(!appState.store.configuration.smartDanishInputEnabled)
                 }
 
-                Toggle("Launch at login", isOn: Binding(
-                    get: { appState.store.configuration.launchAtLogin },
-                    set: { appState.setLaunchAtLogin($0) }
-                ))
+                Section("Startup") {
+                    Toggle("Launch at login", isOn: Binding(
+                        get: { appState.store.configuration.launchAtLogin },
+                        set: { appState.setLaunchAtLogin($0) }
+                    ))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Launch item status: \(appState.launchAtLoginState.statusDescription)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if appState.launchAtLoginState.requiresApproval {
-                        Text("Approve LayoutPilot in System Settings > General > Login Items.")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Launch item status: \(appState.launchAtLoginState.statusDescription)")
                             .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
+                            .foregroundStyle(.secondary)
 
-                    if let errorMessage = appState.launchAtLoginState.errorMessage {
-                        Text(errorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .textSelection(.enabled)
+                        if appState.launchAtLoginState.requiresApproval {
+                            Text("Approve LayoutPilot in System Settings > General > Login Items.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+
+                        if let errorMessage = appState.launchAtLoginState.errorMessage {
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
-            .tabItem {
-                Label("General", systemImage: "gearshape")
-            }
+            .formStyle(.grouped)
         }
-        .frame(width: 520, height: 440)
-        .scenePadding()
+        .padding(28)
+        .navigationTitle("Settings")
     }
 
     private var defaultAutoSwitchSelection: String {

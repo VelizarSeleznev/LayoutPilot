@@ -273,7 +273,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(decoded.target, .lastUsed)
     }
 
-    func testRecentApplicationsAreDeduplicatedAndLimitedToThree() {
+    func testRecentApplicationsAreDeduplicatedAndLimitedToFour() {
         var recent: [RecentApplicationContext] = []
 
         recent = LayoutAutomationEngine.updatedRecentApplications(
@@ -300,8 +300,81 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(recent.map(\.bundleID), [
             "com.example.Four",
             "com.example.Two",
-            "com.example.Three"
+            "com.example.Three",
+            "com.example.One"
         ])
+    }
+
+    func testRecentApplicationsExcludeLayoutPilotAndUnknownContexts() {
+        var recent = [
+            RecentApplicationContext(applicationName: "Mail", bundleID: "com.apple.mail")
+        ]
+
+        for application in [
+            RecentApplicationContext(applicationName: "Safari", bundleID: "com.apple.Safari"),
+            RecentApplicationContext(applicationName: "Notes", bundleID: "com.apple.Notes"),
+            RecentApplicationContext(applicationName: "Music", bundleID: "com.apple.Music"),
+            RecentApplicationContext(applicationName: "Calendar", bundleID: "com.apple.iCal"),
+            RecentApplicationContext(applicationName: "LayoutPilot", bundleID: "com.velizard.LayoutPilot"),
+            RecentApplicationContext(applicationName: "Unknown", bundleID: "Unknown")
+        ] {
+            recent = LayoutAutomationEngine.updatedRecentApplications(
+                recent,
+                with: application,
+                limit: 4
+            )
+        }
+
+        XCTAssertEqual(recent.map(\.bundleID), [
+            "com.apple.iCal",
+            "com.apple.Music",
+            "com.apple.Notes",
+            "com.apple.Safari"
+        ])
+    }
+
+    func testEngineRetainsLastExternalContextWhileLayoutPilotIsFrontmost() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        store.configuration = LayoutPilotConfiguration(
+            automationEnabled: false,
+            profiles: [],
+            rules: []
+        )
+
+        let inputSourceClient = FakeInputSourceClient(currentSourceID: "us")
+        var activeContext = RecentApplicationContext(
+            applicationName: "Editor",
+            bundleID: "com.example.Editor"
+        )
+        let engine = LayoutAutomationEngine(
+            store: store,
+            inputSourceClient: inputSourceClient,
+            activeContextProvider: { activeContext }
+        )
+
+        engine.refreshNow()
+        XCTAssertEqual(engine.lastExternalApplication, activeContext)
+        XCTAssertTrue(engine.recentApplications.isEmpty)
+
+        activeContext = RecentApplicationContext(
+            applicationName: "LayoutPilot",
+            bundleID: LayoutAutomationEngine.layoutPilotBundleID
+        )
+        engine.refreshNow()
+
+        XCTAssertEqual(engine.lastExternalApplication?.bundleID, "com.example.Editor")
+        XCTAssertEqual(engine.snapshot.frontmostBundleID, "com.example.Editor")
+        XCTAssertTrue(engine.recentApplications.isEmpty)
+
+        activeContext = RecentApplicationContext(
+            applicationName: "Browser",
+            bundleID: "com.example.Browser"
+        )
+        engine.refreshNow()
+
+        XCTAssertEqual(engine.lastExternalApplication, activeContext)
+        XCTAssertEqual(engine.recentApplications.map(\.bundleID), ["com.example.Editor"])
     }
 
     func testLastUsedRuleDoesNotFightManualSwitchInActiveApp() throws {
@@ -708,6 +781,42 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "com.google.Chrome"))
         XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "company.thebrowser.Browser"))
         XCTAssertFalse(BrowserURLService.isBrowser(bundleID: "com.apple.Terminal"))
+    }
+
+    func testWebsiteMonitorRunsOnlyForBrowsersWithEnabledRules() {
+        XCTAssertTrue(LayoutAutomationEngine.shouldMonitorWebsite(
+            bundleID: "com.apple.Safari",
+            hasEnabledWebsiteRules: true
+        ))
+        XCTAssertFalse(LayoutAutomationEngine.shouldMonitorWebsite(
+            bundleID: "com.apple.Safari",
+            hasEnabledWebsiteRules: false
+        ))
+        XCTAssertFalse(LayoutAutomationEngine.shouldMonitorWebsite(
+            bundleID: "com.apple.Terminal",
+            hasEnabledWebsiteRules: true
+        ))
+    }
+
+    func testVisibleSidebarSectionsHideDeveloperFeaturesAndIncludeSettings() {
+        XCTAssertEqual(SidebarSection.visibleCases, [
+            .overview,
+            .rules,
+            .websites,
+            .profiles,
+            .snippets,
+            .settings
+        ])
+        XCTAssertFalse(SidebarSection.visibleCases.contains(.chat))
+        XCTAssertFalse(SidebarSection.visibleCases.contains(.diagnostics))
+    }
+
+    func testBrowserURLServiceExtractsNormalizedDomain() {
+        XCTAssertEqual(
+            BrowserURLService.domain(from: "https://Sub.Example.com/path"),
+            "sub.example.com"
+        )
+        XCTAssertNil(BrowserURLService.domain(from: "not a url"))
     }
 
     func testSpellingAutocorrectMisspelledCheck() {

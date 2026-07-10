@@ -3,6 +3,17 @@ import ApplicationServices
 import Foundation
 
 public enum BrowserURLService {
+    public static func domain(from urlString: String) -> String? {
+        guard let url = URL(string: urlString),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host?.lowercased(),
+              !host.isEmpty else {
+            return nil
+        }
+        return host
+    }
+
     public static func activeURL(for app: NSRunningApplication) -> String? {
         guard let bundleID = app.bundleIdentifier else { return nil }
         

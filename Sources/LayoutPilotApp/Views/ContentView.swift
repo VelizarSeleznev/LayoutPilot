@@ -8,7 +8,11 @@ struct ContentView: View {
 
     private var sidebarSelection: SidebarSection {
         get {
-            SidebarSection(rawValue: sidebarSelectionRaw) ?? .overview
+            guard let section = SidebarSection(rawValue: sidebarSelectionRaw),
+                  SidebarSection.visibleCases.contains(section) else {
+                return .overview
+            }
+            return section
         }
         set {
             sidebarSelectionRaw = newValue.rawValue
@@ -21,9 +25,12 @@ struct ContentView: View {
         } detail: {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(20)
         }
         .onAppear {
+            if let storedSection = SidebarSection(rawValue: sidebarSelectionRaw),
+               !SidebarSection.visibleCases.contains(storedSection) {
+                sidebarSelectionRaw = SidebarSection.overview.rawValue
+            }
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -40,7 +47,7 @@ struct ContentView: View {
 
     private var sidebarSelectionBinding: Binding<SidebarSection> {
         Binding(
-            get: { SidebarSection(rawValue: sidebarSelectionRaw) ?? .overview },
+            get: { sidebarSelection },
             set: { newValue in
                 sidebarSelectionRaw = newValue.rawValue
             }
@@ -60,6 +67,8 @@ struct ContentView: View {
             ProfilesView(appState: appState)
         case .snippets:
             SnippetsView(appState: appState)
+        case .settings:
+            SettingsView(appState: appState)
         case .chat:
             ChatView()
         case .diagnostics:
