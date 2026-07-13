@@ -520,6 +520,21 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(service.isDanishAllowed(for: "com.example.Other"))
     }
 
+    func testSmartInputCommitsBufferedWordOnlyAfterBoundary() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+
+        XCTAssertFalse(service.shouldCommitBufferedWord(after: "k"))
+        XCTAssertFalse(service.shouldCommitBufferedWord(after: "'"))
+        XCTAssertFalse(service.shouldCommitBufferedWord(after: "\""))
+
+        for boundary in [" ", ".", ",", "!", "?", ")"] {
+            XCTAssertTrue(service.shouldCommitBufferedWord(after: boundary), boundary)
+        }
+    }
+
     func testSpotlightForceSwitchOnlyRunsForOpenShortcut() {
         XCTAssertTrue(SmartInputService.shouldForceUSForSpotlight(
             keyCode: 49,

@@ -670,7 +670,7 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         
-        if isBoundary(text) {
+        if shouldCommitBufferedWord(after: text) {
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
             let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
             let sourceID = currentInputSourceID()
@@ -893,30 +893,6 @@ public final class SmartInputService: @unchecked Sendable {
         
         if let character = text.first, isWordCharacter(character) {
             appendToBuffer(text)
-            
-            let isDanishAllowed = isDanishAllowed(for: activeBundleID)
-            let updatedBufferToken = getBufferToken()
-
-            if isDanishAllowed,
-               let sourceID = currentInputSourceID(),
-               usInputSources.contains(sourceID),
-               (triggerMap.keys.contains(character) || startsWithTrigger(updatedBufferToken)),
-               let replacement = replacementForToken(updatedBufferToken) {
-                let originalToken = updatedBufferToken
-                replacePendingToken(with: replacement)
-                recordReplacementForUndo(
-                    mode: "danish",
-                    reason: "valid Danish pending replacement",
-                    original: originalToken,
-                    replacement: replacement,
-                    boundary: "",
-                    bundleID: activeBundleID,
-                    originalLayoutID: sourceID,
-                    targetLayoutID: nil,
-                    contextBefore: getContextHistoryWords()
-                )
-                return nil
-            }
             return Unmanaged.passUnretained(event)
         }
         
@@ -1096,13 +1072,13 @@ public final class SmartInputService: @unchecked Sendable {
         }
         return !isWordCharacter(character)
     }
+
+    func shouldCommitBufferedWord(after text: String) -> Bool {
+        isBoundary(text)
+    }
     
     private func containsTrigger(_ token: String) -> Bool {
         token.contains { triggerMap.keys.contains($0) }
-    }
-    
-    private func startsWithTrigger(_ token: String) -> Bool {
-        token.first.map { triggerMap.keys.contains($0) } ?? false
     }
     
     private func replacementCandidate(for token: String) -> String? {
@@ -1283,14 +1259,6 @@ public final class SmartInputService: @unchecked Sendable {
         buffer.reset()
     }
     
-    private func replacePendingToken(with replacement: String) {
-        for _ in buffer.token.dropLast() {
-            postKey(51) // Delete / Backspace
-        }
-        postText(replacement)
-        buffer.reset()
-    }
-
     private static let qwertyToYuken: [Character: Character] = [
         "q": "й", "w": "ц", "e": "у", "r": "к", "t": "е", "y": "н", "u": "г", "i": "ш", "o": "щ", "p": "з", "[": "х", "]": "ъ",
         "a": "ф", "s": "ы", "d": "в", "f": "а", "g": "п", "h": "р", "j": "о", "k": "л", "l": "д", ";": "ж", "'": "э",
