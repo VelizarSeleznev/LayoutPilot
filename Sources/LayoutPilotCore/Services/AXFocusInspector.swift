@@ -35,6 +35,76 @@ public struct AXFocusSnapshot: Sendable {
 
 @MainActor
 public enum AXFocusInspector {
+    /// Reads a small slice immediately before the insertion point. This is safe to
+    /// call from the event-tap thread and avoids fetching an entire document when
+    /// the focused control supports AXStringForRange.
+    nonisolated public static func focusedTextBeforeCaret(maxUTF16Length: Int = 256) -> String? {
+        guard AXIsProcessTrusted(), maxUTF16Length > 0 else { return nil }
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedRef
+        ) == .success,
+        let focusedRef,
+        CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else {
+            return nil
+        }
+
+        let element = focusedRef as! AXUIElement
+        if copyString(element, kAXRoleAttribute) == "AXSecureTextField" ||
+            copyString(element, kAXSubroleAttribute) == "AXSecureTextField" {
+            return nil
+        }
+
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &rangeRef
+        ) == .success,
+        let rangeRef,
+        CFGetTypeID(rangeRef) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        var selection = CFRange()
+        guard AXValueGetValue(rangeRef as! AXValue, .cfRange, &selection),
+              selection.location >= 0,
+              selection.length == 0 else {
+            return nil
+        }
+
+        let start = max(0, selection.location - maxUTF16Length)
+        var requestedRange = CFRange(
+            location: start,
+            length: selection.location - start
+        )
+        if let requestedValue = AXValueCreate(.cfRange, &requestedRange) {
+            var textRef: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(
+                element,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                requestedValue,
+                &textRef
+            ) == .success,
+            let text = textRef as? String {
+                return text
+            }
+        }
+
+        guard let value = copyString(element, kAXValueAttribute) else { return nil }
+        let nsValue = value as NSString
+        guard selection.location <= nsValue.length else { return nil }
+        let fallbackStart = max(0, selection.location - maxUTF16Length)
+        return nsValue.substring(with: NSRange(
+            location: fallbackStart,
+            length: selection.location - fallbackStart
+        ))
+    }
+
     /// Reads the system-wide focused element and reports what it exposes.
     /// Never throws and never mutates anything — safe to poll on a timer.
     public static func capture() -> AXFocusSnapshot {
@@ -156,7 +226,7 @@ public enum AXFocusInspector {
         AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
     }
 
-    private static func copyString(_ element: AXUIElement, _ attribute: String) -> String? {
+    nonisolated private static func copyString(_ element: AXUIElement, _ attribute: String) -> String? {
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success else { return nil }
         if let string = ref as? String { return string }

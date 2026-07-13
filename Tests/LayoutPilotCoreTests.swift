@@ -535,6 +535,47 @@ final class LayoutPilotCoreTests: XCTestCase {
         }
     }
 
+    func testSmartInputRecoversWholeWordWhenBufferContainsOnlyRetypedSuffix() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+
+        let resolution = service.resolveCommitToken(
+            bufferedToken: "ока",
+            focusedTextBeforeCaret: "Что это строка"
+        )
+
+        XCTAssertEqual(resolution.token, "строка")
+        XCTAssertTrue(resolution.hasCompleteFocusedWord)
+    }
+
+    func testSmartInputDoesNotTrustFocusedWordWhenItDoesNotEndInBufferedSuffix() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+
+        let resolution = service.resolveCommitToken(
+            bufferedToken: "ока",
+            focusedTextBeforeCaret: "Что это предложение"
+        )
+
+        XCTAssertEqual(resolution.token, "ока")
+        XCTAssertFalse(resolution.hasCompleteFocusedWord)
+    }
+
+    func testEditedWordTrackerProtectsRetypedFragmentWithoutFocusedWordData() {
+        let tracker = SmartInputService.EditedWordTracker()
+
+        tracker.noteCommittedBoundary(hadWord: true)
+        tracker.noteBackspace(bufferWasEmpty: true)
+
+        XCTAssertTrue(tracker.isEditingExistingWord)
+        XCTAssertTrue(tracker.shouldSuppressFragmentConversion(hasCompleteFocusedWord: false))
+        XCTAssertFalse(tracker.shouldSuppressFragmentConversion(hasCompleteFocusedWord: true))
+    }
+
     func testSpotlightForceSwitchOnlyRunsForOpenShortcut() {
         XCTAssertTrue(SmartInputService.shouldForceUSForSpotlight(
             keyCode: 49,

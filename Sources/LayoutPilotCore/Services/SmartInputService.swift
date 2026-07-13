@@ -84,13 +84,66 @@ public final class SmartInputService: @unchecked Sendable {
         func reset() {
             words.removeAll()
         }
+
+        func replaceLast(_ expectedWord: String, with replacement: String) {
+            guard words.last == expectedWord else { return }
+            words[words.count - 1] = replacement
+        }
+
+        func replaceLast(with word: String) {
+            guard !words.isEmpty else {
+                append(word)
+                return
+            }
+            words[words.count - 1] = word
+        }
         
         func getWords() -> [String] {
             return words
         }
     }
+
+    struct CommitTokenResolution {
+        let token: String
+        let hasCompleteFocusedWord: Bool
+    }
+
+    final class EditedWordTracker {
+        private(set) var isEditingExistingWord = false
+        private var hasReachableCommittedBoundary = false
+
+        func noteCommittedBoundary(hadWord: Bool) {
+            isEditingExistingWord = false
+            hasReachableCommittedBoundary = hadWord
+        }
+
+        func noteBackspace(bufferWasEmpty: Bool) {
+            guard !isEditingExistingWord,
+                  hasReachableCommittedBoundary,
+                  bufferWasEmpty else {
+                return
+            }
+            isEditingExistingWord = true
+            hasReachableCommittedBoundary = false
+        }
+
+        func noteReplacementUndo() {
+            isEditingExistingWord = true
+            hasReachableCommittedBoundary = false
+        }
+
+        func shouldSuppressFragmentConversion(hasCompleteFocusedWord: Bool) -> Bool {
+            isEditingExistingWord && !hasCompleteFocusedWord
+        }
+
+        func reset() {
+            isEditingExistingWord = false
+            hasReachableCommittedBoundary = false
+        }
+    }
     
     private let buffer = WordBuffer()
+    private let editedWordTracker = EditedWordTracker()
     let contextHistory = ContextHistory()
     private let checker = NSSpellChecker.shared
     let learningStore: SmartInputLearningStore
@@ -182,9 +235,13 @@ public final class SmartInputService: @unchecked Sendable {
         buffer.removeLast()
     }
 
-    private func appendToContextHistory(_ word: String) {
+    private func storeContextWord(_ word: String, replacingLast: Bool) {
         lock.lock(); defer { lock.unlock() }
-        contextHistory.append(word)
+        if replacingLast {
+            contextHistory.replaceLast(with: word)
+        } else {
+            contextHistory.append(word)
+        }
     }
 
     private func resetContextHistory() {
@@ -195,6 +252,11 @@ public final class SmartInputService: @unchecked Sendable {
     private func getContextHistoryWords() -> [String] {
         lock.lock(); defer { lock.unlock() }
         return contextHistory.getWords()
+    }
+
+    private func replaceLastContextWord(_ expectedWord: String, with replacement: String) {
+        lock.lock(); defer { lock.unlock() }
+        contextHistory.replaceLast(expectedWord, with: replacement)
     }
 
     private func getLastReplacement() -> LastReplacementInfo? {
@@ -210,6 +272,16 @@ public final class SmartInputService: @unchecked Sendable {
     private func deactivateLastReplacement() {
         lock.lock(); defer { lock.unlock() }
         _lastReplacement?.isActive = false
+    }
+
+    private func getDeferredShortTokenConversion() -> DeferredShortTokenConversion? {
+        lock.lock(); defer { lock.unlock() }
+        return _deferredShortTokenConversion
+    }
+
+    private func setDeferredShortTokenConversion(_ conversion: DeferredShortTokenConversion?) {
+        lock.lock(); defer { lock.unlock() }
+        _deferredShortTokenConversion = conversion
     }
 
     private var _allowedBundleIDs = Set<String>()
@@ -355,7 +427,24 @@ public final class SmartInputService: @unchecked Sendable {
         var boundaryBackspaceConsumed: Bool
     }
 
+    struct ContextualPhraseConversion {
+        let original: String
+        let replacement: String
+        let precedingReplacement: String
+        let targetLayoutID: String?
+    }
+
+    private struct DeferredShortTokenConversion {
+        let original: String
+        let replacement: String
+        let separator: String
+        let sourceLayoutID: String
+        let targetLayoutID: String?
+        let targetLanguage: WordLanguage
+    }
+
     private var _lastReplacement: LastReplacementInfo?
+    private var _deferredShortTokenConversion: DeferredShortTokenConversion?
     
     private var eventTap: CFMachPort?
     private var isStarted = false
@@ -507,6 +596,7 @@ public final class SmartInputService: @unchecked Sendable {
             activatePreferredUSInputSource()
             resetBuffer()
             resetContextHistory()
+            editedWordTracker.reset()
             deactivateLastReplacement()
             if isSuggestionsActive {
                 isSuggestionsActive = false
@@ -520,6 +610,7 @@ public final class SmartInputService: @unchecked Sendable {
             activatePreferredUSInputSource()
             resetBuffer()
             resetContextHistory()
+            editedWordTracker.reset()
             deactivateLastReplacement()
             if isSuggestionsActive {
                 isSuggestionsActive = false
@@ -617,6 +708,7 @@ public final class SmartInputService: @unchecked Sendable {
                 }
             }
             let bufferBefore = getBufferToken()
+            editedWordTracker.noteBackspace(bufferWasEmpty: bufferBefore.isEmpty)
             removeLastFromBuffer()
             let bufferAfter = getBufferToken()
             if bufferBefore != bufferAfter {
@@ -635,6 +727,7 @@ public final class SmartInputService: @unchecked Sendable {
             // Arrow keys (123-126), Escape (53), Tab (48), Return (36)
             resetBuffer()
             resetContextHistory()
+            editedWordTracker.reset()
             deactivateLastReplacement()
         } else {
             deactivateLastReplacement()
@@ -643,18 +736,21 @@ public final class SmartInputService: @unchecked Sendable {
         guard isEnabled || smartBilingualEnabled || textSnippetsEnabled else {
             resetBuffer()
             resetContextHistory()
+            editedWordTracker.reset()
             return Unmanaged.passUnretained(event)
         }
         
         guard shouldHandleCurrentContext() else {
             resetBuffer()
             resetContextHistory()
+            editedWordTracker.reset()
             return Unmanaged.passUnretained(event)
         }
         
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
             resetBuffer()
             resetContextHistory()
+            editedWordTracker.reset()
             return Unmanaged.passUnretained(event)
         }
         
@@ -674,12 +770,33 @@ public final class SmartInputService: @unchecked Sendable {
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
             let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
             let sourceID = currentInputSourceID()
+            let wasEditingExistingWord = editedWordTracker.isEditingExistingWord
+            let tokenResolution: CommitTokenResolution
+            if wasEditingExistingWord {
+                tokenResolution = resolveCommitToken(
+                    bufferedToken: bufferToken,
+                    focusedTextBeforeCaret: AXFocusInspector.focusedTextBeforeCaret()
+                )
+            } else {
+                tokenResolution = CommitTokenResolution(
+                    token: bufferToken,
+                    hasCompleteFocusedWord: true
+                )
+            }
+            let originalToken = tokenResolution.token
+            let suppressFragmentConversion = editedWordTracker.shouldSuppressFragmentConversion(
+                hasCompleteFocusedWord: tokenResolution.hasCompleteFocusedWord
+            )
 
             // 1. Text snippets expansion (no spelling check on snippets)
-            if snippetsAllowed,
-               let snippet = textSnippet(for: bufferToken) {
-                let originalToken = bufferToken
-                replaceToken(with: snippet.replacement, boundary: text)
+            if !suppressFragmentConversion,
+               snippetsAllowed,
+               let snippet = textSnippet(for: originalToken) {
+                replaceToken(
+                    replacing: originalToken,
+                    with: snippet.replacement,
+                    boundary: text
+                )
                 recordReplacementForUndo(
                     mode: "snippet",
                     reason: "expanded text snippet trigger",
@@ -691,6 +808,7 @@ public final class SmartInputService: @unchecked Sendable {
                     targetLayoutID: nil,
                     contextBefore: getContextHistoryWords()
                 )
+                editedWordTracker.noteCommittedBoundary(hadWord: true)
                 return nil
             }
 
@@ -702,31 +820,33 @@ public final class SmartInputService: @unchecked Sendable {
             var detectedLanguage: String? = nil
             
             // Check Danish replacement
-            if isDanishAllowed,
+            if !suppressFragmentConversion,
+               isDanishAllowed,
                let sourceID,
                usInputSources.contains(sourceID),
-               let replacement = replacementForToken(bufferToken) {
+               let replacement = replacementForToken(originalToken) {
                 healedWord = replacement
                 conversionMode = "danish"
                 conversionReason = "valid Danish boundary replacement"
                 detectedLanguage = "da"
             }
             // Check Capitalization Correction
-            else if smartBilingualEnabled,
+            else if !suppressFragmentConversion,
+                    smartBilingualEnabled,
                     isBilingualAllowed,
                     let sourceID,
-                    let correctedToken = capitalizationCorrection(for: bufferToken, sourceLayoutID: sourceID) {
+                    let correctedToken = capitalizationCorrection(for: originalToken, sourceLayoutID: sourceID) {
                 healedWord = correctedToken
                 conversionMode = "capitalization"
                 conversionReason = "corrected accidental double initial uppercase"
                 detectedLanguage = detectLanguage(of: correctedToken) == .russian ? "ru" : "en"
             }
             // Check Bilingual Layout Conversion
-            else if smartBilingualEnabled,
+            else if !suppressFragmentConversion,
+                    smartBilingualEnabled,
                     isBilingualAllowed,
-                    let sourceID,
                     let bilingualResult = checkBilingualConversion(
-                        for: bufferToken,
+                        for: originalToken,
                         bundleID: activeBundleID,
                         logSuppression: true
                     ) {
@@ -739,8 +859,7 @@ public final class SmartInputService: @unchecked Sendable {
                 detectedLanguage = (bilingualResult.targetLayoutID == russianLayoutID) ? "ru" : "en"
             }
             
-            let wordToCheck = healedWord ?? bufferToken
-            let originalToken = bufferToken
+            let wordToCheck = healedWord ?? originalToken
             
             // Determine language for spell check
             if detectedLanguage == nil {
@@ -764,7 +883,8 @@ public final class SmartInputService: @unchecked Sendable {
             var spellingApplied = false
             var spellingSuggestions: [String] = []
             
-            if spellingAutocorrectEnabled,
+            if !suppressFragmentConversion,
+               spellingAutocorrectEnabled,
                !wordToCheck.isEmpty,
                let lang = detectedLanguage,
                isMisspelled(wordToCheck, language: lang, layoutID: sourceID) {
@@ -791,7 +911,11 @@ public final class SmartInputService: @unchecked Sendable {
                     }
                 }
                 
-                replaceToken(with: finalWord, boundary: convertedBoundary)
+                replaceToken(
+                    replacing: originalToken,
+                    with: finalWord,
+                    boundary: convertedBoundary
+                )
                 
                 let mode = spellingApplied ? "spelling" : (conversionMode ?? "unknown")
                 let reason = spellingApplied 
@@ -810,7 +934,10 @@ public final class SmartInputService: @unchecked Sendable {
                     contextBefore: contextBefore
                 )
                 
-                appendToContextHistory(finalWord)
+                storeContextWord(
+                    finalWord,
+                    replacingLast: wasEditingExistingWord && tokenResolution.hasCompleteFocusedWord
+                )
                 
                 if let targetLayoutID {
                     if shouldSwitchLayout(to: targetLayoutID, replacement: finalWord) {
@@ -822,7 +949,7 @@ public final class SmartInputService: @unchecked Sendable {
                 
                 if spellingApplied {
                     let finalConvertedBoundary = convertedBoundary
-                    let originalLanguage = detectedLanguage ?? "en"
+                    let autocorrectedWord = finalWord
                     
                     // Show Suggestions UI
                     DispatchQueue.main.async { [weak self] in
@@ -840,7 +967,7 @@ public final class SmartInputService: @unchecked Sendable {
                             guard let self else { return }
                             self.replaceAutoCorrectedWord(
                                 original: originalToken,
-                                autocorrected: finalWord,
+                                autocorrected: autocorrectedWord,
                                 replacement: selectedWord,
                                 boundary: finalConvertedBoundary
                             )
@@ -848,13 +975,18 @@ public final class SmartInputService: @unchecked Sendable {
                                 self.learningStore.recordRejectedConversion(
                                     mode: "spelling",
                                     original: originalToken,
-                                    replacement: finalWord,
+                                    replacement: autocorrectedWord,
                                     sourceLayoutID: sourceID,
                                     targetLayoutID: nil,
                                     bundleID: activeBundleID
                                 )
                             } else {
-                                self.recordAcceptedTypedWord(selectedWord, layoutID: sourceID, bundleID: activeBundleID)
+                                self.recordAcceptedTypedWord(
+                                    selectedWord,
+                                    layoutID: sourceID,
+                                    bundleID: activeBundleID,
+                                    replacingLastContextWord: wasEditingExistingWord && tokenResolution.hasCompleteFocusedWord
+                                )
                             }
                         }
                         
@@ -872,18 +1004,22 @@ public final class SmartInputService: @unchecked Sendable {
                         self?.onHideSuggestions?()
                     }
                 }
+
+                editedWordTracker.noteCommittedBoundary(hadWord: !originalToken.isEmpty)
                 
                 return nil
             }
             
-            if !bufferToken.isEmpty {
+            if !originalToken.isEmpty && !suppressFragmentConversion {
                 recordAcceptedTypedWord(
-                    bufferToken,
+                    originalToken,
                     layoutID: sourceID,
-                    bundleID: activeBundleID
+                    bundleID: activeBundleID,
+                    replacingLastContextWord: wasEditingExistingWord && tokenResolution.hasCompleteFocusedWord
                 )
             }
             resetBuffer()
+            editedWordTracker.noteCommittedBoundary(hadWord: !originalToken.isEmpty)
             DispatchQueue.main.async { [weak self] in
                 self?.isSuggestionsActive = false
                 self?.onHideSuggestions?()
@@ -897,6 +1033,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         resetBuffer()
+        editedWordTracker.reset()
         return Unmanaged.passUnretained(event)
     }
 
@@ -1076,6 +1213,35 @@ public final class SmartInputService: @unchecked Sendable {
     func shouldCommitBufferedWord(after text: String) -> Bool {
         isBoundary(text)
     }
+
+    func resolveCommitToken(
+        bufferedToken: String,
+        focusedTextBeforeCaret: String?
+    ) -> CommitTokenResolution {
+        guard !bufferedToken.isEmpty,
+              let focusedTextBeforeCaret else {
+            return CommitTokenResolution(
+                token: bufferedToken,
+                hasCompleteFocusedWord: false
+            )
+        }
+
+        let focusedToken = String(
+            focusedTextBeforeCaret.reversed().prefix { isWordCharacter($0) }.reversed()
+        )
+        guard !focusedToken.isEmpty,
+              focusedToken.hasSuffix(bufferedToken) else {
+            return CommitTokenResolution(
+                token: bufferedToken,
+                hasCompleteFocusedWord: false
+            )
+        }
+
+        return CommitTokenResolution(
+            token: focusedToken,
+            hasCompleteFocusedWord: true
+        )
+    }
     
     private func containsTrigger(_ token: String) -> Bool {
         token.contains { triggerMap.keys.contains($0) }
@@ -1251,8 +1417,8 @@ public final class SmartInputService: @unchecked Sendable {
         usleep(3000)
     }
     
-    private func replaceToken(with replacement: String, boundary: String) {
-        for _ in buffer.token {
+    private func replaceToken(replacing token: String, with replacement: String, boundary: String) {
+        for _ in token {
             postKey(51) // Delete / Backspace
         }
         postText(replacement + boundary)
@@ -1579,8 +1745,13 @@ public final class SmartInputService: @unchecked Sendable {
         return targetCount >= 2 && targetCount >= opposingCount + 1
     }
 
-    private func recordAcceptedTypedWord(_ word: String, layoutID: String?, bundleID: String?) {
-        contextHistory.append(word)
+    private func recordAcceptedTypedWord(
+        _ word: String,
+        layoutID: String?,
+        bundleID: String?,
+        replacingLastContextWord: Bool = false
+    ) {
+        storeContextWord(word, replacingLast: replacingLastContextWord)
 
         let outcome = learningStore.recordAcceptedWord(
             word,
@@ -1595,7 +1766,7 @@ public final class SmartInputService: @unchecked Sendable {
                 bundleID: bundleID,
                 sourceLayoutID: layoutID,
                 original: word,
-                contextBefore: contextHistory.getWords(),
+                contextBefore: getContextHistoryWords(),
                 learnedWordCount: outcome.count
             ))
         }
@@ -1691,6 +1862,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         buffer.reset()
+        editedWordTracker.noteReplacementUndo()
 
         SmartInputEventLog.shared.record(.init(
             kind: "replacement_undo",
