@@ -1038,9 +1038,9 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     /// Smart Danish input applies when globally allowed for all apps, or this app is allow-listed.
-    private func isDanishAllowed(for bundleID: String) -> Bool {
+    func isDanishAllowed(for bundleID: String) -> Bool {
         if excludedBundleIDs.contains(bundleID) { return false }
-        return danishApplyToAll || allowedBundleIDs.contains(bundleID)
+        return isEnabled && (danishApplyToAll || allowedBundleIDs.contains(bundleID))
     }
 
     /// Smart RU/EN autocorrection applies when globally allowed for all apps, or this app is allow-listed.

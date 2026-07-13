@@ -464,6 +464,62 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us", "us", "us"])
     }
 
+    func testApplicationActivationNotificationAppliesRuleForNewFrontmostApp() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        let us = InputLayoutProfile(name: "U.S.", inputSourceID: "us")
+        store.configuration = LayoutPilotConfiguration(
+            automationEnabled: true,
+            profiles: [us],
+            rules: [
+                ApplicationLayoutRule(
+                    applicationBundleID: "com.apple.Terminal",
+                    applicationName: "Terminal",
+                    profileID: us.id
+                )
+            ]
+        )
+
+        let inputSourceClient = FakeInputSourceClient(currentSourceID: "ru")
+        var activeContext = RecentApplicationContext(
+            applicationName: "Editor",
+            bundleID: "com.example.Editor"
+        )
+        let engine = LayoutAutomationEngine(
+            store: store,
+            inputSourceClient: inputSourceClient,
+            activeContextProvider: { activeContext }
+        )
+        engine.start()
+        defer { engine.stop() }
+
+        activeContext = RecentApplicationContext(
+            applicationName: "Terminal",
+            bundleID: "com.apple.Terminal"
+        )
+        NSWorkspace.shared.notificationCenter.post(
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+        await Task.yield()
+
+        XCTAssertEqual(engine.snapshot.frontmostBundleID, "com.apple.Terminal")
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us"])
+    }
+
+    func testDisablingSmartDanishOverridesPerAppAndApplyToAllSettings() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+        service.isEnabled = false
+        service.allowedBundleIDs = ["com.example.Editor"]
+        service.danishApplyToAll = true
+
+        XCTAssertFalse(service.isDanishAllowed(for: "com.example.Editor"))
+        XCTAssertFalse(service.isDanishAllowed(for: "com.example.Other"))
+    }
+
     func testSpotlightForceSwitchOnlyRunsForOpenShortcut() {
         XCTAssertTrue(SmartInputService.shouldForceUSForSpotlight(
             keyCode: 49,

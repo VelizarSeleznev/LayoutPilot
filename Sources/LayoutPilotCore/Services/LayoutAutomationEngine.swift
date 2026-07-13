@@ -60,7 +60,7 @@ public final class LayoutAutomationEngine {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
-                    self?.refreshCurrentInputSource()
+                    self?.refreshNow()
                 }
             }
         )
@@ -102,21 +102,6 @@ public final class LayoutAutomationEngine {
             return
         }
         requestWebsiteDomainRefresh(for: application)
-    }
-
-    private func refreshCurrentInputSource() {
-        guard let application = lastExternalApplication,
-              let currentSourceID = inputSourceClient.currentInputSourceID(),
-              currentSourceID != "Unknown" else {
-            return
-        }
-
-        rememberCurrentInputSource(currentSourceID, for: application.bundleID)
-        guard snapshot.currentInputSourceID != currentSourceID else { return }
-        var updatedSnapshot = snapshot
-        updatedSnapshot.currentInputSourceID = currentSourceID
-        updatedSnapshot.lastAction = "Remembered current layout"
-        publishSnapshot(updatedSnapshot)
     }
 
     private func refreshNow(forceApplyRule: Bool, requestsWebsiteDomain: Bool) {
