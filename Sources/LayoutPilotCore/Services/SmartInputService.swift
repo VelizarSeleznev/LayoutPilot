@@ -439,6 +439,7 @@ public final class SmartInputService: @unchecked Sendable {
         let replacement: String
         let separator: String
         let sourceLayoutID: String
+        let bundleID: String?
         let targetLayoutID: String?
         let targetLanguage: WordLanguage
     }
@@ -597,6 +598,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
             if isSuggestionsActive {
                 isSuggestionsActive = false
@@ -611,6 +613,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
             if isSuggestionsActive {
                 isSuggestionsActive = false
@@ -666,6 +669,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         if keyCode == 51 { // Backspace / Delete
+            setDeferredShortTokenConversion(nil)
             if isSuggestionsActive {
                 isSuggestionsActive = false
                 onHideSuggestions?()
@@ -728,6 +732,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
         } else {
             deactivateLastReplacement()
@@ -737,6 +742,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             return Unmanaged.passUnretained(event)
         }
         
@@ -744,6 +750,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             return Unmanaged.passUnretained(event)
         }
         
@@ -751,6 +758,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             return Unmanaged.passUnretained(event)
         }
         
@@ -787,11 +795,30 @@ public final class SmartInputService: @unchecked Sendable {
             let suppressFragmentConversion = editedWordTracker.shouldSuppressFragmentConversion(
                 hasCompleteFocusedWord: tokenResolution.hasCompleteFocusedWord
             )
+            let storedDeferredShortToken = wasEditingExistingWord
+                ? nil
+                : getDeferredShortTokenConversion()
+            let deferredShortToken: DeferredShortTokenConversion? = storedDeferredShortToken.flatMap { candidate in
+                guard candidate.bundleID == nil || candidate.bundleID == activeBundleID else {
+                    return nil
+                }
+                let expectedSuffix = candidate.original + candidate.separator + originalToken
+                if let focusedText = AXFocusInspector.focusedTextBeforeCaret(),
+                   !focusedText.hasSuffix(expectedSuffix) {
+                    return nil
+                }
+                return candidate
+            }
+            if wasEditingExistingWord ||
+               (storedDeferredShortToken != nil && deferredShortToken == nil) {
+                setDeferredShortTokenConversion(nil)
+            }
 
             // 1. Text snippets expansion (no spelling check on snippets)
             if !suppressFragmentConversion,
                snippetsAllowed,
                let snippet = textSnippet(for: originalToken) {
+                setDeferredShortTokenConversion(nil)
                 replaceToken(
                     replacing: originalToken,
                     with: snippet.replacement,
@@ -896,41 +923,76 @@ public final class SmartInputService: @unchecked Sendable {
                     spellingApplied = true
                 }
             }
+
+            let contextualPhrase: ContextualPhraseConversion?
+            if spellingApplied || !smartBilingualEnabled || !isBilingualAllowed {
+                contextualPhrase = nil
+            } else {
+                contextualPhrase = deferredShortToken.flatMap { candidate in
+                    contextualPhraseConversion(
+                        candidate: candidate,
+                        followingOriginal: originalToken,
+                        followingReplacement: finalWord,
+                        followingTargetLayoutID: targetLayoutID
+                    )
+                }
+            }
             
             // Perform actual replacement
-            if conversionMode != nil || spellingApplied {
+            if conversionMode != nil || spellingApplied || contextualPhrase != nil {
                 let contextBefore = getContextHistoryWords()
+                let effectiveTargetLayoutID = contextualPhrase?.targetLayoutID ?? targetLayoutID
                 
                 var convertedBoundary = text
-                if conversionMode == "bilingual", let targetLayoutID {
+                if (conversionMode == "bilingual" || contextualPhrase != nil),
+                   let effectiveTargetLayoutID {
                     let (_, russianLayoutID) = findLayouts()
-                    if targetLayoutID == russianLayoutID {
+                    if effectiveTargetLayoutID == russianLayoutID {
                         convertedBoundary = translateEnglishToRussian(text)
                     } else {
                         convertedBoundary = translateRussianToEnglish(text)
                     }
                 }
-                
-                replaceToken(
-                    replacing: originalToken,
-                    with: finalWord,
-                    boundary: convertedBoundary
-                )
-                
-                let mode = spellingApplied ? "spelling" : (conversionMode ?? "unknown")
-                let reason = spellingApplied 
-                    ? "spelling auto-corrected '\(wordToCheck)' to '\(finalWord)' after \(conversionMode ?? "no") conversion"
-                    : (conversionReason ?? "")
+
+                if let contextualPhrase {
+                    replaceContextualPhrase(
+                        replacing: contextualPhrase.original,
+                        with: contextualPhrase.replacement,
+                        boundary: convertedBoundary
+                    )
+                    replaceLastContextWord(
+                        deferredShortToken?.original ?? "",
+                        with: contextualPhrase.precedingReplacement
+                    )
+                } else {
+                    replaceToken(
+                        replacing: originalToken,
+                        with: finalWord,
+                        boundary: convertedBoundary
+                    )
+                }
+                setDeferredShortTokenConversion(nil)
+
+                let mode = contextualPhrase != nil
+                    ? "bilingual_context"
+                    : (spellingApplied ? "spelling" : (conversionMode ?? "unknown"))
+                let reason = contextualPhrase != nil
+                    ? "following word confirmed the intended layout for a short preceding token"
+                    : (spellingApplied
+                        ? "spelling auto-corrected '\(wordToCheck)' to '\(finalWord)' after \(conversionMode ?? "no") conversion"
+                        : (conversionReason ?? ""))
+                let replacementOriginal = contextualPhrase?.original ?? originalToken
+                let replacementFinal = contextualPhrase?.replacement ?? finalWord
                 
                 recordReplacementForUndo(
                     mode: mode,
                     reason: reason,
-                    original: originalToken,
-                    replacement: finalWord,
+                    original: replacementOriginal,
+                    replacement: replacementFinal,
                     boundary: convertedBoundary,
                     bundleID: activeBundleID,
                     originalLayoutID: sourceID,
-                    targetLayoutID: targetLayoutID,
+                    targetLayoutID: effectiveTargetLayoutID,
                     contextBefore: contextBefore
                 )
                 
@@ -939,10 +1001,10 @@ public final class SmartInputService: @unchecked Sendable {
                     replacingLast: wasEditingExistingWord && tokenResolution.hasCompleteFocusedWord
                 )
                 
-                if let targetLayoutID {
-                    if shouldSwitchLayout(to: targetLayoutID, replacement: finalWord) {
+                if let effectiveTargetLayoutID {
+                    if shouldSwitchLayout(to: effectiveTargetLayoutID, replacement: finalWord) {
                         DispatchQueue.main.async {
-                            try? SystemInputSourceClient().activateInputSource(withID: targetLayoutID)
+                            try? SystemInputSourceClient().activateInputSource(withID: effectiveTargetLayoutID)
                         }
                     }
                 }
@@ -1018,6 +1080,19 @@ public final class SmartInputService: @unchecked Sendable {
                     replacingLastContextWord: wasEditingExistingWord && tokenResolution.hasCompleteFocusedWord
                 )
             }
+            if !suppressFragmentConversion,
+               smartBilingualEnabled,
+               isBilingualAllowed,
+               let sourceID {
+                setDeferredShortTokenConversion(deferredShortTokenConversion(
+                    for: originalToken,
+                    separator: text,
+                    sourceLayoutID: sourceID,
+                    bundleID: activeBundleID
+                ))
+            } else {
+                setDeferredShortTokenConversion(nil)
+            }
             resetBuffer()
             editedWordTracker.noteCommittedBoundary(hadWord: !originalToken.isEmpty)
             DispatchQueue.main.async { [weak self] in
@@ -1034,6 +1109,7 @@ public final class SmartInputService: @unchecked Sendable {
         
         resetBuffer()
         editedWordTracker.reset()
+        setDeferredShortTokenConversion(nil)
         return Unmanaged.passUnretained(event)
     }
 
@@ -1424,6 +1500,18 @@ public final class SmartInputService: @unchecked Sendable {
         postText(replacement + boundary)
         buffer.reset()
     }
+
+    private func replaceContextualPhrase(
+        replacing original: String,
+        with replacement: String,
+        boundary: String
+    ) {
+        for _ in original {
+            postKey(51) // Delete / Backspace
+        }
+        postText(replacement + boundary)
+        buffer.reset()
+    }
     
     private static let qwertyToYuken: [Character: Character] = [
         "q": "й", "w": "ц", "e": "у", "r": "к", "t": "е", "y": "н", "u": "г", "i": "ш", "o": "щ", "p": "з", "[": "х", "]": "ъ",
@@ -1700,33 +1788,187 @@ public final class SmartInputService: @unchecked Sendable {
         isRussian: Bool,
         contextWords: [String]
     ) -> BilingualResult? {
+        guard (isUS && !isValidEnglishWord(token)) ||
+              (isRussian && !isValidRussianWord(token)),
+              let candidate = deferredShortTokenConversion(
+                  for: token,
+                  separator: " ",
+                  sourceLayoutID: isUS ? "com.apple.keylayout.US" : "com.apple.keylayout.RussianWin"
+              ),
+              contextStronglySuggests(candidate.targetLanguage, in: contextWords) else {
+            return nil
+        }
+
+        return BilingualResult(
+            replacement: candidate.replacement,
+            targetLayoutID: candidate.targetLayoutID
+        )
+    }
+
+    func contextualPhraseConversion(
+        precedingToken: String,
+        separator: String,
+        precedingSourceLayoutID: String,
+        followingOriginal: String,
+        followingReplacement: String,
+        followingTargetLayoutID: String?
+    ) -> ContextualPhraseConversion? {
+        guard let candidate = deferredShortTokenConversion(
+            for: precedingToken,
+            separator: separator,
+            sourceLayoutID: precedingSourceLayoutID
+        ) else {
+            return nil
+        }
+
+        return contextualPhraseConversion(
+            candidate: candidate,
+            followingOriginal: followingOriginal,
+            followingReplacement: followingReplacement,
+            followingTargetLayoutID: followingTargetLayoutID
+        )
+    }
+
+    private func contextualPhraseConversion(
+        candidate: DeferredShortTokenConversion,
+        followingOriginal: String,
+        followingReplacement: String,
+        followingTargetLayoutID: String?
+    ) -> ContextualPhraseConversion? {
+        guard followingReplacement.count >= 2,
+              detectLanguage(of: followingReplacement) == candidate.targetLanguage else {
+            return nil
+        }
+
+        let conversionConfirmsLanguage = candidate.targetLayoutID != nil &&
+            followingTargetLayoutID == candidate.targetLayoutID
+        let wordConfirmsLanguage: Bool
+        switch candidate.targetLanguage {
+        case .russian:
+            wordConfirmsLanguage = isValidRussianWord(followingReplacement)
+        case .english:
+            wordConfirmsLanguage = isValidEnglishWord(followingReplacement)
+        case .unknown:
+            wordConfirmsLanguage = false
+        }
+
+        guard conversionConfirmsLanguage || wordConfirmsLanguage else {
+            return nil
+        }
+
+        let original = candidate.original + candidate.separator + followingOriginal
+        let replacement = candidate.replacement + candidate.separator + followingReplacement
+        guard learningStore.suppressionReason(
+            mode: "bilingual_context",
+            original: original,
+            replacement: replacement,
+            sourceLayoutID: candidate.sourceLayoutID,
+            targetLayoutID: candidate.targetLayoutID
+        ) == nil else {
+            return nil
+        }
+
+        return ContextualPhraseConversion(
+            original: original,
+            replacement: replacement,
+            precedingReplacement: candidate.replacement,
+            targetLayoutID: candidate.targetLayoutID
+        )
+    }
+
+    private func deferredShortTokenConversion(
+        for token: String,
+        separator: String,
+        sourceLayoutID: String,
+        bundleID: String? = nil
+    ) -> DeferredShortTokenConversion? {
+        guard (1...3).contains(token.count),
+              !separator.isEmpty,
+              separator.unicodeScalars.allSatisfy({ CharacterSet.whitespaces.contains($0) }) else {
+            return nil
+        }
+
+        let isUS = usInputSources.contains(sourceLayoutID)
+        let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
+                        sourceLayoutID.hasSuffix(".ru") ||
+                        sourceLayoutID.contains(".ru.") ||
+                        sourceLayoutID == "ru"
+
         if isUS {
-            guard isLatinWord(token), !isValidEnglishWord(token) else { return nil }
+            guard isLatinWord(token) else { return nil }
             let translated = translateEnglishToRussian(token)
             guard translated != token,
                   isCyrillicWord(translated),
-                  commonRussianShortWords.contains(translated.lowercased()),
-                  contextStronglySuggests(.russian, in: contextWords) else {
+                  isPlausibleContextualShortWord(translated, language: .russian) else {
                 return nil
             }
             let (_, russianLayoutID) = findLayouts()
-            return BilingualResult(replacement: translated, targetLayoutID: russianLayoutID)
+            let candidate = DeferredShortTokenConversion(
+                original: token,
+                replacement: translated,
+                separator: separator,
+                sourceLayoutID: sourceLayoutID,
+                bundleID: bundleID,
+                targetLayoutID: russianLayoutID,
+                targetLanguage: .russian
+            )
+            return hasExplicitDeferredSuppression(candidate) ? nil : candidate
         }
 
         if isRussian {
-            guard isCyrillicWord(token), !isValidRussianWord(token) else { return nil }
+            guard isCyrillicWord(token) else { return nil }
             let translated = translateRussianToEnglish(token)
             guard translated != token,
                   isLatinWord(translated),
-                  commonEnglishShortWords.contains(translated.lowercased()),
-                  contextStronglySuggests(.english, in: contextWords) else {
+                  isPlausibleContextualShortWord(translated, language: .english) else {
                 return nil
             }
             let (englishLayoutID, _) = findLayouts()
-            return BilingualResult(replacement: translated, targetLayoutID: englishLayoutID)
+            let candidate = DeferredShortTokenConversion(
+                original: token,
+                replacement: translated,
+                separator: separator,
+                sourceLayoutID: sourceLayoutID,
+                bundleID: bundleID,
+                targetLayoutID: englishLayoutID,
+                targetLanguage: .english
+            )
+            return hasExplicitDeferredSuppression(candidate) ? nil : candidate
         }
 
         return nil
+    }
+
+    private func hasExplicitDeferredSuppression(_ candidate: DeferredShortTokenConversion) -> Bool {
+        learningStore.suppressionReason(
+            mode: "bilingual",
+            original: candidate.original,
+            replacement: candidate.replacement,
+            sourceLayoutID: candidate.sourceLayoutID,
+            targetLayoutID: candidate.targetLayoutID
+        ) == "user_rejected_conversion"
+    }
+
+    private func isPlausibleContextualShortWord(_ word: String, language: WordLanguage) -> Bool {
+        if word.count <= 2 {
+            switch language {
+            case .russian:
+                return commonRussianShortWords.contains(word.lowercased()) && isValidRussianWord(word)
+            case .english:
+                return commonEnglishShortWords.contains(word.lowercased()) && isValidEnglishWord(word)
+            case .unknown:
+                return false
+            }
+        }
+
+        switch language {
+        case .russian:
+            return isValidRussianWord(word)
+        case .english:
+            return isValidEnglishWord(word)
+        case .unknown:
+            return false
+        }
     }
 
     private func contextStronglySuggests(_ language: WordLanguage, in words: [String]) -> Bool {
