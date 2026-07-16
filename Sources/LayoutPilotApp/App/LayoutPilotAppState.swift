@@ -67,6 +67,7 @@ final class LayoutPilotAppState {
         SmartInputService.shared.smartBilingualApplyToAll = configuration.smartBilingualApplyToAll
         SmartInputService.shared.danishApplyToAll = configuration.smartDanishApplyToAll
         SmartInputService.shared.textSnippetsEnabled = configuration.areTextSnippetsActive
+        SmartInputService.shared.textSnippetExpansionMode = configuration.textSnippetExpansionMode
         SmartInputService.shared.textSnippets = configuration.textSnippets
         SmartInputService.shared.textSnippetGroups = configuration.textSnippetGroups
         SmartInputService.shared.spellingAutocorrectEnabled = configuration.spellingAutocorrectEnabled

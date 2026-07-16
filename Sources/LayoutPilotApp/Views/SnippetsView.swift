@@ -150,6 +150,24 @@ struct SnippetsView: View {
             .padding(.top, 14)
             .padding(.bottom, 10)
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Expand snippets")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Expand snippets", selection: Binding(
+                    get: { configuration.textSnippetExpansionMode },
+                    set: { appState.store.setTextSnippetExpansionMode($0) }
+                )) {
+                    Text("Immediately").tag(TextSnippetExpansionMode.immediately)
+                    Text("After Space").tag(TextSnippetExpansionMode.afterSpace)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .help(expansionModeHelp)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+
             searchField
 
             Picker("Folder", selection: $listFilter) {
@@ -212,6 +230,15 @@ struct SnippetsView: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 8)
+    }
+
+    private var expansionModeHelp: String {
+        switch configuration.textSnippetExpansionMode {
+        case .immediately:
+            return "Replace a trigger as soon as its final character is typed."
+        case .afterSpace:
+            return "Replace a trigger only when Space is pressed after it."
+        }
     }
 
     private var listEmptyState: some View {

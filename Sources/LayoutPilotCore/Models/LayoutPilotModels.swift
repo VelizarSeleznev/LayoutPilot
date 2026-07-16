@@ -244,6 +244,11 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public enum TextSnippetExpansionMode: String, CaseIterable, Codable, Hashable, Sendable {
+    case immediately
+    case afterSpace
+}
+
 public enum TextSnippetPolicy {
     public static let securityExcludedBundleIDs: Set<String> = [
         "com.apple.Terminal",
@@ -300,6 +305,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     /// When enabled, smart Danish input applies to every app (except built-in exclusions).
     public var smartDanishApplyToAll: Bool
     public var textSnippetsEnabled: Bool
+    public var textSnippetExpansionMode: TextSnippetExpansionMode
     public var textSnippets: [TextSnippet]
     public var textSnippetGroups: [TextSnippetGroup]
     public var addedModules: Set<FeatureModule>
@@ -324,6 +330,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         smartBilingualApplyToAll: Bool = false,
         smartDanishApplyToAll: Bool = false,
         textSnippetsEnabled: Bool = true,
+        textSnippetExpansionMode: TextSnippetExpansionMode = .immediately,
         textSnippets: [TextSnippet] = [],
         textSnippetGroups: [TextSnippetGroup] = [],
         addedModules: Set<FeatureModule> = Set(FeatureModule.allCases),
@@ -331,7 +338,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule],
         websiteRules: [WebsiteLayoutRule] = [],
-        spellingAutocorrectEnabled: Bool = true
+        spellingAutocorrectEnabled: Bool = false
     ) {
         self.automationEnabled = automationEnabled
         self.launchAtLogin = launchAtLogin
@@ -347,6 +354,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartBilingualApplyToAll = smartBilingualApplyToAll
         self.smartDanishApplyToAll = smartDanishApplyToAll
         self.textSnippetsEnabled = textSnippetsEnabled
+        self.textSnippetExpansionMode = textSnippetExpansionMode
         self.textSnippets = textSnippets
         self.textSnippetGroups = textSnippetGroups
         self.addedModules = addedModules
@@ -372,6 +380,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case smartBilingualApplyToAll
         case smartDanishApplyToAll
         case textSnippetsEnabled
+        case textSnippetExpansionMode
         case textSnippets
         case textSnippetGroups
         case addedModules
@@ -398,6 +407,10 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartBilingualApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualApplyToAll) ?? false
         self.smartDanishApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartDanishApplyToAll) ?? false
         self.textSnippetsEnabled = try container.decodeIfPresent(Bool.self, forKey: .textSnippetsEnabled) ?? true
+        self.textSnippetExpansionMode = try container.decodeIfPresent(
+            TextSnippetExpansionMode.self,
+            forKey: .textSnippetExpansionMode
+        ) ?? .immediately
         self.textSnippets = try container.decodeIfPresent([TextSnippet].self, forKey: .textSnippets) ?? []
         self.textSnippetGroups = try container.decodeIfPresent([TextSnippetGroup].self, forKey: .textSnippetGroups) ?? []
         self.addedModules = try container.decodeIfPresent(Set<FeatureModule>.self, forKey: .addedModules)
@@ -406,7 +419,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
         self.websiteRules = try container.decodeIfPresent([WebsiteLayoutRule].self, forKey: .websiteRules) ?? []
-        self.spellingAutocorrectEnabled = try container.decodeIfPresent(Bool.self, forKey: .spellingAutocorrectEnabled) ?? true
+        self.spellingAutocorrectEnabled = try container.decodeIfPresent(Bool.self, forKey: .spellingAutocorrectEnabled) ?? false
     }
 
     public static func `default`() -> LayoutPilotConfiguration {
@@ -482,7 +495,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
                 )
             ],
             websiteRules: [],
-            spellingAutocorrectEnabled: true
+            spellingAutocorrectEnabled: false
         )
     }
 

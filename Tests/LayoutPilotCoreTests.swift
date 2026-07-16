@@ -225,8 +225,22 @@ final class LayoutPilotCoreTests: XCTestCase {
 
         XCTAssertTrue(configuration.textSnippetsEnabled)
         XCTAssertTrue(configuration.textSnippets.isEmpty)
+        XCTAssertEqual(configuration.textSnippetExpansionMode, .immediately)
+        XCTAssertFalse(configuration.spellingAutocorrectEnabled)
         XCTAssertEqual(configuration.addedModules, Set(FeatureModule.allCases))
         XCTAssertTrue(configuration.moduleSelectionCompleted)
+    }
+
+    func testSnippetExpansionModeAndExplicitAutocorrectPreferencePersist() throws {
+        var configuration = LayoutPilotConfiguration.default()
+        configuration.textSnippetExpansionMode = .afterSpace
+        configuration.spellingAutocorrectEnabled = true
+
+        let data = try JSONEncoder().encode(configuration)
+        let decoded = try JSONDecoder().decode(LayoutPilotConfiguration.self, from: data)
+
+        XCTAssertEqual(decoded.textSnippetExpansionMode, .afterSpace)
+        XCTAssertTrue(decoded.spellingAutocorrectEnabled)
     }
 
     func testNewConfigurationStartsWithModuleChooser() {
@@ -239,6 +253,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(configuration.isSmartDanishActive)
         XCTAssertFalse(configuration.isSmartBilingualActive)
         XCTAssertFalse(configuration.areTextSnippetsActive)
+        XCTAssertFalse(configuration.spellingAutocorrectEnabled)
     }
 
     func testModuleMembershipGatesRuntimeSwitches() {
@@ -960,6 +975,73 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(service.isSnippetTriggerContinuation("@@email"))
         XCTAssertEqual(service.textSnippet(for: "@@email")?.replacement, "me@example.com")
         XCTAssertNil(service.textSnippet(for: "disabled"))
+    }
+
+    func testImmediateSnippetExpansionWinsOnExactMatch() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippetExpansionMode = .immediately
+        service.textSnippets = [
+            TextSnippet(trigger: ";a", replacement: "first"),
+            TextSnippet(trigger: ";abc", replacement: "longer")
+        ]
+
+        let expansion = service.snippetExpansion(
+            bufferedToken: ";",
+            inputText: "a"
+        )
+
+        XCTAssertEqual(expansion?.snippet.replacement, "first")
+        XCTAssertEqual(expansion?.original, ";a")
+        XCTAssertEqual(expansion?.replacingToken, ";")
+        XCTAssertEqual(expansion?.boundary, "")
+    }
+
+    func testAfterSpaceSnippetExpansionWaitsForLiteralSpace() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippetExpansionMode = .afterSpace
+        service.textSnippets = [TextSnippet(trigger: "brb.", replacement: "be right back")]
+
+        XCTAssertNil(service.snippetExpansion(bufferedToken: "brb", inputText: "."))
+        XCTAssertTrue(service.shouldBufferSnippetInput("brb."))
+        XCTAssertNil(service.snippetExpansion(bufferedToken: "brb.", inputText: ","))
+
+        let expansion = service.snippetExpansion(bufferedToken: "brb.", inputText: " ")
+        XCTAssertEqual(expansion?.original, "brb.")
+        XCTAssertEqual(expansion?.replacingToken, "brb.")
+        XCTAssertEqual(expansion?.boundary, " ")
+    }
+
+    func testSnippetReplacementUsesOneBackspaceUndo() {
+        XCTAssertEqual(
+            SmartInputService.replacementBackspaceAction(
+                mode: "snippet",
+                boundary: " ",
+                boundaryBackspaceConsumed: false
+            ),
+            .undo(deleteBoundary: true)
+        )
+        XCTAssertEqual(
+            SmartInputService.replacementBackspaceAction(
+                mode: "snippet",
+                boundary: "",
+                boundaryBackspaceConsumed: false
+            ),
+            .undo(deleteBoundary: false)
+        )
+        XCTAssertEqual(
+            SmartInputService.replacementBackspaceAction(
+                mode: "bilingual",
+                boundary: " ",
+                boundaryBackspaceConsumed: false
+            ),
+            .deleteBoundary
+        )
     }
 
     func testSnippetLookupRespectsApplicationScope() throws {

@@ -343,6 +343,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private var _textSnippetsEnabled = true
+    private var _textSnippetExpansionMode = TextSnippetExpansionMode.immediately
     private var _textSnippets: [TextSnippet] = []
     private var _textSnippetGroups: [TextSnippetGroup] = []
 
@@ -354,6 +355,17 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _textSnippetsEnabled = newValue
+        }
+    }
+
+    public var textSnippetExpansionMode: TextSnippetExpansionMode {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _textSnippetExpansionMode
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _textSnippetExpansionMode = newValue
         }
     }
 
@@ -429,6 +441,18 @@ public final class SmartInputService: @unchecked Sendable {
         let targetLayoutID: String?
         var isActive: Bool
         var boundaryBackspaceConsumed: Bool
+    }
+
+    struct SnippetExpansion {
+        let snippet: TextSnippet
+        let original: String
+        let replacingToken: String
+        let boundary: String
+    }
+
+    enum ReplacementBackspaceAction: Equatable {
+        case deleteBoundary
+        case undo(deleteBoundary: Bool)
     }
 
     struct ContextualPhraseConversion {
@@ -681,17 +705,23 @@ public final class SmartInputService: @unchecked Sendable {
             if let last = getLastReplacement(), last.isActive {
                 let elapsed = Date().timeIntervalSince(last.timestamp)
                 if elapsed <= _smartBilingualUndoDelay {
-                    if !last.boundary.isEmpty, !last.boundaryBackspaceConsumed {
+                    switch Self.replacementBackspaceAction(
+                        mode: last.mode,
+                        boundary: last.boundary,
+                        boundaryBackspaceConsumed: last.boundaryBackspaceConsumed
+                    ) {
+                    case .deleteBoundary:
                         markReplacementBoundaryBackspaceConsumed(last, elapsed: elapsed, keyCode: keyCode)
                         return Unmanaged.passUnretained(event)
+                    case .undo(let deleteBoundary):
+                        performReplacementUndo(
+                            last,
+                            elapsed: elapsed,
+                            keyCode: keyCode,
+                            deleteBoundary: deleteBoundary
+                        )
+                        return nil // Swallow event.
                     }
-                    performReplacementUndo(
-                        last,
-                        elapsed: elapsed,
-                        keyCode: keyCode,
-                        deleteBoundary: !last.boundaryBackspaceConsumed
-                    )
-                    return nil // Swallow event.
                 } else {
                     deactivateLastReplacement()
                     if last.boundary.isEmpty || last.boundaryBackspaceConsumed {
@@ -773,7 +803,34 @@ public final class SmartInputService: @unchecked Sendable {
         let snippetsAllowed = isTextSnippetsAllowed(for: activeBundleID)
         let bufferToken = getBufferToken()
 
-        if snippetsAllowed, isSnippetTriggerContinuation(bufferToken + text, bundleID: activeBundleID) {
+        if snippetsAllowed,
+           let expansion = snippetExpansion(
+               bufferedToken: bufferToken,
+               inputText: text,
+               bundleID: activeBundleID
+           ) {
+            setDeferredShortTokenConversion(nil)
+            replaceToken(
+                replacing: expansion.replacingToken,
+                with: expansion.snippet.replacement,
+                boundary: expansion.boundary
+            )
+            recordReplacementForUndo(
+                mode: "snippet",
+                reason: "expanded text snippet trigger",
+                original: expansion.original,
+                replacement: expansion.snippet.replacement,
+                boundary: expansion.boundary,
+                bundleID: activeBundleID,
+                originalLayoutID: currentInputSourceID(),
+                targetLayoutID: nil,
+                contextBefore: getContextHistoryWords()
+            )
+            editedWordTracker.noteCommittedBoundary(hadWord: true)
+            return nil
+        }
+
+        if snippetsAllowed, shouldBufferSnippetInput(bufferToken + text, bundleID: activeBundleID) {
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
@@ -816,31 +873,6 @@ public final class SmartInputService: @unchecked Sendable {
             if wasEditingExistingWord ||
                (storedDeferredShortToken != nil && deferredShortToken == nil) {
                 setDeferredShortTokenConversion(nil)
-            }
-
-            // 1. Text snippets expansion (no spelling check on snippets)
-            if !suppressFragmentConversion,
-               snippetsAllowed,
-               let snippet = textSnippet(for: originalToken, bundleID: activeBundleID) {
-                setDeferredShortTokenConversion(nil)
-                replaceToken(
-                    replacing: originalToken,
-                    with: snippet.replacement,
-                    boundary: text
-                )
-                recordReplacementForUndo(
-                    mode: "snippet",
-                    reason: "expanded text snippet trigger",
-                    original: originalToken,
-                    replacement: snippet.replacement,
-                    boundary: text,
-                    bundleID: activeBundleID,
-                    originalLayoutID: sourceID,
-                    targetLayoutID: nil,
-                    contextBefore: getContextHistoryWords()
-                )
-                editedWordTracker.noteCommittedBoundary(hadWord: true)
-                return nil
             }
 
             // Perform logical conversion / healing
@@ -1258,6 +1290,45 @@ public final class SmartInputService: @unchecked Sendable {
             } ?? snippet.isEnabled
             return allowed && snippet.trigger == token && !snippet.replacement.isEmpty
         }
+    }
+
+    func snippetExpansion(
+        bufferedToken: String,
+        inputText: String,
+        bundleID: String? = nil
+    ) -> SnippetExpansion? {
+        switch textSnippetExpansionMode {
+        case .immediately:
+            let original = bufferedToken + inputText
+            guard let snippet = textSnippet(for: original, bundleID: bundleID) else {
+                return nil
+            }
+            return SnippetExpansion(
+                snippet: snippet,
+                original: original,
+                replacingToken: bufferedToken,
+                boundary: ""
+            )
+        case .afterSpace:
+            guard inputText == " ",
+                  let snippet = textSnippet(for: bufferedToken, bundleID: bundleID) else {
+                return nil
+            }
+            return SnippetExpansion(
+                snippet: snippet,
+                original: bufferedToken,
+                replacingToken: bufferedToken,
+                boundary: inputText
+            )
+        }
+    }
+
+    func shouldBufferSnippetInput(_ token: String, bundleID: String? = nil) -> Bool {
+        if isSnippetTriggerContinuation(token, bundleID: bundleID) {
+            return true
+        }
+        return textSnippetExpansionMode == .afterSpace
+            && textSnippet(for: token, bundleID: bundleID) != nil
     }
 
     func isSnippetTriggerContinuation(_ token: String, bundleID: String? = nil) -> Bool {
@@ -2067,6 +2138,20 @@ public final class SmartInputService: @unchecked Sendable {
             replacementAgeLimit: _smartBilingualUndoDelay,
             contextBefore: contextBefore
         ))
+    }
+
+    static func replacementBackspaceAction(
+        mode: String,
+        boundary: String,
+        boundaryBackspaceConsumed: Bool
+    ) -> ReplacementBackspaceAction {
+        if mode == "snippet" {
+            return .undo(deleteBoundary: !boundary.isEmpty && !boundaryBackspaceConsumed)
+        }
+        if !boundary.isEmpty, !boundaryBackspaceConsumed {
+            return .deleteBoundary
+        }
+        return .undo(deleteBoundary: !boundaryBackspaceConsumed)
     }
 
     private func markReplacementBoundaryBackspaceConsumed(

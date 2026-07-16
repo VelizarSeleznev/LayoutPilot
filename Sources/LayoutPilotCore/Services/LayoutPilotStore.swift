@@ -300,6 +300,12 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setTextSnippetExpansionMode(_ mode: TextSnippetExpansionMode) {
+        var updated = configuration
+        updated.textSnippetExpansionMode = mode
+        configuration = updated
+    }
+
     public func setModuleAdded(_ module: FeatureModule, isAdded: Bool) {
         var updated = configuration
         if isAdded {

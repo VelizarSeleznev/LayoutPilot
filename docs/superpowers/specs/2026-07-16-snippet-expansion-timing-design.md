@@ -1,7 +1,7 @@
 # Snippet Expansion Timing Design
 
 **Date:** 2026-07-16
-**Status:** Approved for implementation
+**Status:** Implemented
 
 ## Goal
 
