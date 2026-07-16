@@ -59,15 +59,16 @@ final class LayoutPilotAppState {
     }
 
     private static func syncSmartInputService(with configuration: LayoutPilotConfiguration) {
-        SmartInputService.shared.isEnabled = configuration.smartDanishInputEnabled
+        SmartInputService.shared.isEnabled = configuration.isSmartDanishActive
         SmartInputService.shared.allowedBundleIDs = Set(configuration.smartDanishInputAllowedBundleIDs)
-        SmartInputService.shared.smartBilingualEnabled = configuration.smartBilingualEnabled
+        SmartInputService.shared.smartBilingualEnabled = configuration.isSmartBilingualActive
         SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(configuration.smartBilingualAllowedBundleIDs)
         SmartInputService.shared.smartBilingualUndoDelay = configuration.smartBilingualUndoDelay
         SmartInputService.shared.smartBilingualApplyToAll = configuration.smartBilingualApplyToAll
         SmartInputService.shared.danishApplyToAll = configuration.smartDanishApplyToAll
-        SmartInputService.shared.textSnippetsEnabled = configuration.textSnippetsEnabled
+        SmartInputService.shared.textSnippetsEnabled = configuration.areTextSnippetsActive
         SmartInputService.shared.textSnippets = configuration.textSnippets
+        SmartInputService.shared.textSnippetGroups = configuration.textSnippetGroups
         SmartInputService.shared.spellingAutocorrectEnabled = configuration.spellingAutocorrectEnabled
     }
 }

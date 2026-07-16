@@ -97,7 +97,8 @@ public final class LayoutAutomationEngine {
     }
 
     public func refreshWebsiteNow() {
-        guard let application = lastExternalApplication,
+        guard store.configuration.isModuleAdded(.layoutSwitching),
+              let application = lastExternalApplication,
               BrowserURLService.isBrowser(bundleID: application.bundleID) else {
             return
         }
@@ -128,7 +129,9 @@ public final class LayoutAutomationEngine {
 
         lastExternalApplication = activeContext
         updateWebsiteMonitor(for: activeContext)
-        if requestsWebsiteDomain, BrowserURLService.isBrowser(bundleID: bundleID) {
+        if store.configuration.isModuleAdded(.layoutSwitching),
+           requestsWebsiteDomain,
+           BrowserURLService.isBrowser(bundleID: bundleID) {
             requestWebsiteDomainRefresh(for: activeContext)
         }
 
@@ -137,7 +140,7 @@ public final class LayoutAutomationEngine {
             forPreviousBundleBeforeActivating: bundleID
         )
 
-        guard store.configuration.automationEnabled else {
+        guard store.configuration.isLayoutSwitchingActive else {
             rememberCurrentInputSource(currentSourceID, for: bundleID)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
@@ -266,7 +269,8 @@ public final class LayoutAutomationEngine {
     }
 
     private func updateWebsiteMonitor(for application: RecentApplicationContext) {
-        let hasEnabledRules = store.configuration.websiteRules.contains { $0.isEnabled }
+        let hasEnabledRules = store.configuration.isModuleAdded(.layoutSwitching)
+            && store.configuration.websiteRules.contains { $0.isEnabled }
         guard Self.shouldMonitorWebsite(
             bundleID: application.bundleID,
             hasEnabledWebsiteRules: hasEnabledRules

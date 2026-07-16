@@ -9,7 +9,7 @@ struct ContentView: View {
     private var sidebarSelection: SidebarSection {
         get {
             guard let section = SidebarSection(rawValue: sidebarSelectionRaw),
-                  SidebarSection.visibleCases.contains(section) else {
+                  visibleSections.contains(section) else {
                 return .overview
             }
             return section
@@ -19,16 +19,23 @@ struct ContentView: View {
         }
     }
 
+    private var visibleSections: [SidebarSection] {
+        SidebarSection.visibleCases(for: appState.store.configuration.addedModules)
+    }
+
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: sidebarSelectionBinding)
+            SidebarView(
+                selection: sidebarSelectionBinding,
+                addedModules: appState.store.configuration.addedModules
+            )
         } detail: {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .onAppear {
             if let storedSection = SidebarSection(rawValue: sidebarSelectionRaw),
-               !SidebarSection.visibleCases.contains(storedSection) {
+               !visibleSections.contains(storedSection) {
                 sidebarSelectionRaw = SidebarSection.overview.rawValue
             }
             NSApp.setActivationPolicy(.regular)
@@ -41,6 +48,11 @@ struct ContentView: View {
             if let newValue {
                 sidebarSelectionRaw = newValue.rawValue
                 appState.selectedSidebarSection = nil
+            }
+        }
+        .onChange(of: appState.store.configuration.addedModules) { _, _ in
+            if !visibleSections.contains(sidebarSelection) {
+                sidebarSelectionRaw = SidebarSection.overview.rawValue
             }
         }
     }
@@ -67,6 +79,10 @@ struct ContentView: View {
             ProfilesView(appState: appState)
         case .snippets:
             SnippetsView(appState: appState)
+        case .smartDanish:
+            SmartDanishModuleView(appState: appState)
+        case .smartBilingual:
+            SmartBilingualModuleView(appState: appState)
         case .settings:
             SettingsView(appState: appState)
         case .chat:

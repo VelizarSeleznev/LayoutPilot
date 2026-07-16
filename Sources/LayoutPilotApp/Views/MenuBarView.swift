@@ -10,19 +10,27 @@ struct MenuBarView: View {
         appState.engine.lastExternalApplication
     }
 
+    private var hasContextControls: Bool {
+        let modules = appState.store.configuration.addedModules
+        return modules.contains(.layoutSwitching)
+            || modules.contains(.smartDanish)
+            || modules.contains(.smartBilingual)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             masterHeader
 
-            if let application = activeApplication {
+            if hasContextControls, let application = activeApplication {
                 Divider()
                 applicationSection(application)
 
-                if let domain = appState.engine.activeWebsiteDomain {
+                if appState.store.configuration.isModuleAdded(.layoutSwitching),
+                   let domain = appState.engine.activeWebsiteDomain {
                     Divider()
                     websiteSection(domain: domain)
                 }
-            } else {
+            } else if hasContextControls {
                 Divider()
                 ContentUnavailableView(
                     "No Recent App",
@@ -49,13 +57,15 @@ struct MenuBarView: View {
             Text("LayoutPilot")
                 .font(.title3.weight(.semibold))
             Spacer()
-            Toggle("Automatic switching", isOn: Binding(
-                get: { appState.store.configuration.automationEnabled },
-                set: { appState.store.setAutomationEnabled($0) }
-            ))
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
+            if appState.store.configuration.isModuleAdded(.layoutSwitching) {
+                Toggle("Automatic switching", isOn: Binding(
+                    get: { appState.store.configuration.automationEnabled },
+                    set: { appState.store.setAutomationEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -69,7 +79,7 @@ struct MenuBarView: View {
                     Text(application.applicationName)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(appState.store.configuration.automationEnabled ? "Automatic switching is on" : "Automatic switching is off")
+                    Text(contextStatusDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -78,34 +88,50 @@ struct MenuBarView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
 
-            pickerRow(
-                title: "App Layout",
-                systemImage: "keyboard",
-                selection: Binding(
-                    get: { autoSwitchSelection(for: application) },
-                    set: { setAutoSwitchSelection($0, for: application) }
-                ),
-                includesLastUsed: true,
-                inheritedTitle: "No Override"
-            )
-
-            MenuToggleRow(
-                title: "Smart RU/EN",
-                symbol: "character.book.closed",
-                isOn: isSmartBilingualEnabled(for: application)
-            ) {
-                setSmartBilingualEnabled(!isSmartBilingualEnabled(for: application), for: application)
+            if appState.store.configuration.isModuleAdded(.layoutSwitching) {
+                pickerRow(
+                    title: "App Layout",
+                    systemImage: "keyboard",
+                    selection: Binding(
+                        get: { autoSwitchSelection(for: application) },
+                        set: { setAutoSwitchSelection($0, for: application) }
+                    ),
+                    includesLastUsed: true,
+                    inheritedTitle: "No Override"
+                )
             }
 
-            MenuToggleRow(
-                title: "Smart Danish",
-                symbol: "character.textbox",
-                isOn: isSmartDanishEnabled(for: application)
-            ) {
-                setSmartDanishEnabled(!isSmartDanishEnabled(for: application), for: application)
+            if appState.store.configuration.isModuleAdded(.smartBilingual) {
+                MenuToggleRow(
+                    title: "Smart RU/EN",
+                    symbol: "character.book.closed",
+                    isOn: isSmartBilingualEnabled(for: application)
+                ) {
+                    setSmartBilingualEnabled(!isSmartBilingualEnabled(for: application), for: application)
+                }
+            }
+
+            if appState.store.configuration.isModuleAdded(.smartDanish) {
+                MenuToggleRow(
+                    title: "Smart Danish",
+                    symbol: "character.textbox",
+                    isOn: isSmartDanishEnabled(for: application)
+                ) {
+                    setSmartDanishEnabled(!isSmartDanishEnabled(for: application), for: application)
+                }
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private var contextStatusDescription: String {
+        let configuration = appState.store.configuration
+        if configuration.isModuleAdded(.layoutSwitching) {
+            return configuration.automationEnabled ? "Automatic switching is on" : "Automatic switching is off"
+        }
+        let smartModuleCount = [FeatureModule.smartDanish, .smartBilingual]
+            .filter(configuration.addedModules.contains).count
+        return smartModuleCount == 1 ? "1 smart input module" : "\(smartModuleCount) smart input modules"
     }
 
     private func websiteSection(domain: String) -> some View {

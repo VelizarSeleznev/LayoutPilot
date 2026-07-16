@@ -1,7 +1,7 @@
 # Modular Interface and Snippets Design
 
 Date: 2026-07-16
-Status: Approved design, awaiting written-spec review
+Status: Implemented
 
 ## Objective
 

@@ -3,19 +3,35 @@ import SwiftUI
 
 struct SidebarView: View {
     @Binding var selection: SidebarSection
+    let addedModules: Set<FeatureModule>
 
     var body: some View {
         List(selection: $selection) {
             sidebarRow(.overview)
 
-            Section("Rules") {
-                sidebarRow(.rules)
-                sidebarRow(.websites)
+            if addedModules.contains(.snippets) {
+                Section("Writing") {
+                    sidebarRow(.snippets)
+                }
             }
 
-            Section("Tools") {
-                sidebarRow(.profiles)
-                sidebarRow(.snippets)
+            if addedModules.contains(.smartDanish) || addedModules.contains(.smartBilingual) {
+                Section("Smart Input") {
+                    if addedModules.contains(.smartDanish) {
+                        sidebarRow(.smartDanish)
+                    }
+                    if addedModules.contains(.smartBilingual) {
+                        sidebarRow(.smartBilingual)
+                    }
+                }
+            }
+
+            if addedModules.contains(.layoutSwitching) {
+                Section("Layout Switching") {
+                    sidebarRow(.rules)
+                    sidebarRow(.websites)
+                    sidebarRow(.profiles)
+                }
             }
 
             Section {

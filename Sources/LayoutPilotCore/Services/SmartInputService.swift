@@ -19,15 +19,7 @@ public final class SmartInputService: @unchecked Sendable {
     private let usInputSources = Set(["com.apple.keylayout.US", "com.apple.keylayout.ABC"])
     private let danishLanguage = "da"
     
-    private let excludedBundleIDs = Set([
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-        "com.mitchellh.ghostty",
-        "com.celeste",
-        "com.1password.1password",
-        "com.agilebits.onepassword7",
-        "com.bitwarden.desktop",
-    ])
+    private let excludedBundleIDs = TextSnippetPolicy.securityExcludedBundleIDs
     
     private let triggerMap: [Character: Character] = [
         ";": "æ",
@@ -352,6 +344,7 @@ public final class SmartInputService: @unchecked Sendable {
 
     private var _textSnippetsEnabled = true
     private var _textSnippets: [TextSnippet] = []
+    private var _textSnippetGroups: [TextSnippetGroup] = []
 
     public var textSnippetsEnabled: Bool {
         get {
@@ -372,6 +365,17 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _textSnippets = newValue
+        }
+    }
+
+    public var textSnippetGroups: [TextSnippetGroup] {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _textSnippetGroups
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _textSnippetGroups = newValue
         }
     }
 
@@ -769,7 +773,7 @@ public final class SmartInputService: @unchecked Sendable {
         let snippetsAllowed = isTextSnippetsAllowed(for: activeBundleID)
         let bufferToken = getBufferToken()
 
-        if snippetsAllowed, isSnippetTriggerContinuation(bufferToken + text) {
+        if snippetsAllowed, isSnippetTriggerContinuation(bufferToken + text, bundleID: activeBundleID) {
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
@@ -817,7 +821,7 @@ public final class SmartInputService: @unchecked Sendable {
             // 1. Text snippets expansion (no spelling check on snippets)
             if !suppressFragmentConversion,
                snippetsAllowed,
-               let snippet = textSnippet(for: originalToken) {
+               let snippet = textSnippet(for: originalToken, bundleID: activeBundleID) {
                 setDeferredShortTokenConversion(nil)
                 replaceToken(
                     replacing: originalToken,
@@ -1240,21 +1244,32 @@ public final class SmartInputService: @unchecked Sendable {
 
     private func isTextSnippetsAllowed(for bundleID: String) -> Bool {
         if excludedBundleIDs.contains(bundleID) { return false }
-        return textSnippetsEnabled && textSnippets.contains { $0.isEnabled }
-    }
-
-    func textSnippet(for token: String) -> TextSnippet? {
-        textSnippets.first { snippet in
-            snippet.isEnabled && snippet.trigger == token && !snippet.replacement.isEmpty
+        let groups = textSnippetGroups
+        return textSnippetsEnabled && textSnippets.contains {
+            TextSnippetPolicy.allows($0, in: bundleID, groups: groups)
         }
     }
 
-    func isSnippetTriggerContinuation(_ token: String) -> Bool {
+    func textSnippet(for token: String, bundleID: String? = nil) -> TextSnippet? {
+        let groups = textSnippetGroups
+        return textSnippets.first { snippet in
+            let allowed = bundleID.map {
+                TextSnippetPolicy.allows(snippet, in: $0, groups: groups)
+            } ?? snippet.isEnabled
+            return allowed && snippet.trigger == token && !snippet.replacement.isEmpty
+        }
+    }
+
+    func isSnippetTriggerContinuation(_ token: String, bundleID: String? = nil) -> Bool {
         guard !token.isEmpty else {
             return false
         }
+        let groups = textSnippetGroups
         return textSnippets.contains { snippet in
-            snippet.isEnabled && snippet.trigger.hasPrefix(token) && snippet.trigger != token
+            let allowed = bundleID.map {
+                TextSnippetPolicy.allows(snippet, in: $0, groups: groups)
+            } ?? snippet.isEnabled
+            return allowed && snippet.trigger.hasPrefix(token) && snippet.trigger != token
         }
     }
     

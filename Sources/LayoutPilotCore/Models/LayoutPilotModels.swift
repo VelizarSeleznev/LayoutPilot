@@ -113,37 +113,170 @@ public struct RecentApplicationContext: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
+public enum FeatureModule: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
+    case snippets
+    case smartDanish
+    case smartBilingual
+    case layoutSwitching
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .snippets: return "Snippets"
+        case .smartDanish: return "Smart Danish"
+        case .smartBilingual: return "Smart RU/EN"
+        case .layoutSwitching: return "Layout Switching"
+        }
+    }
+
+    public var summary: String {
+        switch self {
+        case .snippets: return "Expand short triggers into text you use every day."
+        case .smartDanish: return "Type Danish characters from a familiar Latin layout."
+        case .smartBilingual: return "Repair words typed in the wrong Russian or English layout."
+        case .layoutSwitching: return "Choose keyboard layouts for apps and websites."
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .snippets: return "text.badge.plus"
+        case .smartDanish: return "character.textbox"
+        case .smartBilingual: return "character.book.closed"
+        case .layoutSwitching: return "keyboard.badge.ellipsis"
+        }
+    }
+}
+
+public enum SnippetApplicationScopeMode: String, CaseIterable, Codable, Hashable, Sendable {
+    case allApplications
+    case onlySelected
+    case allExceptSelected
+}
+
+public struct SnippetApplicationScope: Codable, Hashable, Sendable {
+    public var mode: SnippetApplicationScopeMode
+    public var bundleIDs: [String]
+
+    public init(mode: SnippetApplicationScopeMode = .allApplications, bundleIDs: [String] = []) {
+        self.mode = mode
+        self.bundleIDs = Array(Set(bundleIDs.filter { !$0.isEmpty })).sorted()
+    }
+
+    public func allows(bundleID: String) -> Bool {
+        switch mode {
+        case .allApplications:
+            return true
+        case .onlySelected:
+            return bundleIDs.contains(bundleID)
+        case .allExceptSelected:
+            return !bundleIDs.contains(bundleID)
+        }
+    }
+}
+
+public struct TextSnippetGroup: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
-    public var trigger: String
-    public var replacement: String
-    public var isEnabled: Bool
+    public var name: String
+    public var applicationScope: SnippetApplicationScope
 
     public init(
         id: UUID = UUID(),
-        trigger: String,
-        replacement: String,
-        isEnabled: Bool = true
+        name: String,
+        applicationScope: SnippetApplicationScope = SnippetApplicationScope()
     ) {
         self.id = id
+        self.name = name
+        self.applicationScope = applicationScope
+    }
+}
+
+public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var trigger: String
+    public var replacement: String
+    public var isEnabled: Bool
+    public var groupID: UUID?
+    public var applicationScopeOverride: SnippetApplicationScope?
+
+    public init(
+        id: UUID = UUID(),
+        name: String? = nil,
+        trigger: String,
+        replacement: String,
+        isEnabled: Bool = true,
+        groupID: UUID? = nil,
+        applicationScopeOverride: SnippetApplicationScope? = nil
+    ) {
+        self.id = id
+        self.name = name ?? trigger
         self.trigger = trigger
         self.replacement = replacement
         self.isEnabled = isEnabled
+        self.groupID = groupID
+        self.applicationScopeOverride = applicationScopeOverride
     }
 
     enum CodingKeys: String, CodingKey {
         case id
+        case name
         case trigger
         case replacement
         case isEnabled
+        case groupID
+        case applicationScopeOverride
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         self.trigger = try container.decode(String.self, forKey: .trigger)
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? self.trigger
         self.replacement = try container.decode(String.self, forKey: .replacement)
         self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        self.groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
+        self.applicationScopeOverride = try container.decodeIfPresent(
+            SnippetApplicationScope.self,
+            forKey: .applicationScopeOverride
+        )
+    }
+}
+
+public enum TextSnippetPolicy {
+    public static let securityExcludedBundleIDs: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "com.mitchellh.ghostty",
+        "com.celeste",
+        "com.1password.1password",
+        "com.agilebits.onepassword7",
+        "com.bitwarden.desktop",
+    ]
+
+    public static func effectiveScope(
+        for snippet: TextSnippet,
+        groups: [TextSnippetGroup]
+    ) -> SnippetApplicationScope {
+        if let override = snippet.applicationScopeOverride {
+            return override
+        }
+        if let groupID = snippet.groupID,
+           let group = groups.first(where: { $0.id == groupID }) {
+            return group.applicationScope
+        }
+        return SnippetApplicationScope()
+    }
+
+    public static func allows(
+        _ snippet: TextSnippet,
+        in bundleID: String,
+        groups: [TextSnippetGroup]
+    ) -> Bool {
+        !securityExcludedBundleIDs.contains(bundleID)
+            && snippet.isEnabled
+            && effectiveScope(for: snippet, groups: groups).allows(bundleID: bundleID)
     }
 }
 
@@ -168,6 +301,9 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var smartDanishApplyToAll: Bool
     public var textSnippetsEnabled: Bool
     public var textSnippets: [TextSnippet]
+    public var textSnippetGroups: [TextSnippetGroup]
+    public var addedModules: Set<FeatureModule>
+    public var moduleSelectionCompleted: Bool
     public var profiles: [InputLayoutProfile]
     public var rules: [ApplicationLayoutRule]
     public var websiteRules: [WebsiteLayoutRule]
@@ -189,6 +325,9 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         smartDanishApplyToAll: Bool = false,
         textSnippetsEnabled: Bool = true,
         textSnippets: [TextSnippet] = [],
+        textSnippetGroups: [TextSnippetGroup] = [],
+        addedModules: Set<FeatureModule> = Set(FeatureModule.allCases),
+        moduleSelectionCompleted: Bool = true,
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule],
         websiteRules: [WebsiteLayoutRule] = [],
@@ -209,6 +348,9 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartDanishApplyToAll = smartDanishApplyToAll
         self.textSnippetsEnabled = textSnippetsEnabled
         self.textSnippets = textSnippets
+        self.textSnippetGroups = textSnippetGroups
+        self.addedModules = addedModules
+        self.moduleSelectionCompleted = moduleSelectionCompleted
         self.profiles = profiles
         self.rules = rules
         self.websiteRules = websiteRules
@@ -231,6 +373,9 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case smartDanishApplyToAll
         case textSnippetsEnabled
         case textSnippets
+        case textSnippetGroups
+        case addedModules
+        case moduleSelectionCompleted
         case profiles
         case rules
         case websiteRules
@@ -254,6 +399,10 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartDanishApplyToAll = try container.decodeIfPresent(Bool.self, forKey: .smartDanishApplyToAll) ?? false
         self.textSnippetsEnabled = try container.decodeIfPresent(Bool.self, forKey: .textSnippetsEnabled) ?? true
         self.textSnippets = try container.decodeIfPresent([TextSnippet].self, forKey: .textSnippets) ?? []
+        self.textSnippetGroups = try container.decodeIfPresent([TextSnippetGroup].self, forKey: .textSnippetGroups) ?? []
+        self.addedModules = try container.decodeIfPresent(Set<FeatureModule>.self, forKey: .addedModules)
+            ?? Set(FeatureModule.allCases)
+        self.moduleSelectionCompleted = try container.decodeIfPresent(Bool.self, forKey: .moduleSelectionCompleted) ?? true
         self.profiles = try container.decodeIfPresent([InputLayoutProfile].self, forKey: .profiles) ?? []
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
         self.websiteRules = try container.decodeIfPresent([WebsiteLayoutRule].self, forKey: .websiteRules) ?? []
@@ -306,6 +455,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
             smartBilingualEnabled: true,
             smartBilingualAllowedBundleIDs: defaultApps,
             smartBilingualUndoDelay: Self.defaultSmartBilingualUndoDelay,
+            addedModules: [],
+            moduleSelectionCompleted: false,
             profiles: [us, russian],
             rules: [
                 ApplicationLayoutRule(
@@ -333,6 +484,26 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
             websiteRules: [],
             spellingAutocorrectEnabled: true
         )
+    }
+
+    public func isModuleAdded(_ module: FeatureModule) -> Bool {
+        addedModules.contains(module)
+    }
+
+    public var isLayoutSwitchingActive: Bool {
+        isModuleAdded(.layoutSwitching) && automationEnabled
+    }
+
+    public var isSmartDanishActive: Bool {
+        isModuleAdded(.smartDanish) && smartDanishInputEnabled
+    }
+
+    public var isSmartBilingualActive: Bool {
+        isModuleAdded(.smartBilingual) && smartBilingualEnabled
+    }
+
+    public var areTextSnippetsActive: Bool {
+        isModuleAdded(.snippets) && textSnippetsEnabled
     }
 }
 
@@ -364,20 +535,36 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
     case websites
     case profiles
     case snippets
+    case smartDanish
+    case smartBilingual
     case settings
     case chat
     case diagnostics
 
     public var id: String { rawValue }
 
-    public static var visibleCases: [SidebarSection] {
-        [.overview, .rules, .websites, .profiles, .snippets, .settings]
+    public static func visibleCases(for addedModules: Set<FeatureModule>) -> [SidebarSection] {
+        var result: [SidebarSection] = [.overview]
+        if addedModules.contains(.snippets) {
+            result.append(.snippets)
+        }
+        if addedModules.contains(.smartDanish) {
+            result.append(.smartDanish)
+        }
+        if addedModules.contains(.smartBilingual) {
+            result.append(.smartBilingual)
+        }
+        if addedModules.contains(.layoutSwitching) {
+            result.append(contentsOf: [.rules, .websites, .profiles])
+        }
+        result.append(.settings)
+        return result
     }
 
     public var title: String {
         switch self {
         case .overview:
-            return "Home"
+            return "My Modules"
         case .rules:
             return "Applications"
         case .websites:
@@ -386,6 +573,10 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "Input Profiles"
         case .snippets:
             return "Snippets"
+        case .smartDanish:
+            return "Smart Danish"
+        case .smartBilingual:
+            return "Smart RU/EN"
         case .settings:
             return "Settings"
         case .chat:
@@ -398,7 +589,7 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
     public var systemImage: String {
         switch self {
         case .overview:
-            return "rectangle.3.group"
+            return "square.grid.2x2"
         case .rules:
             return "app.badge"
         case .websites:
@@ -407,6 +598,10 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Codable, Sendabl
             return "keyboard"
         case .snippets:
             return "text.badge.plus"
+        case .smartDanish:
+            return "character.textbox"
+        case .smartBilingual:
+            return "character.book.closed"
         case .settings:
             return "gearshape"
         case .chat:

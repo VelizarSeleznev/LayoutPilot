@@ -15,82 +15,56 @@ struct SettingsView: View {
 
             Form {
                 Section("General") {
-                    Toggle("Automatic switching", isOn: Binding(
-                        get: { appState.store.configuration.automationEnabled },
-                        set: { appState.store.setAutomationEnabled($0) }
-                    ))
-
                     Toggle("Show menu bar item", isOn: Binding(
                         get: { appState.store.configuration.showMenuBarItem },
                         set: { appState.store.setShowMenuBarItem($0) }
                     ))
 
-                    Toggle("Smart Danish Input", isOn: Binding(
-                        get: { appState.store.configuration.smartDanishInputEnabled },
-                        set: { appState.store.setSmartDanishInputEnabled($0) }
-                    ))
-
-                    Toggle("Smart RU/EN Input", isOn: Binding(
-                        get: { appState.store.configuration.smartBilingualEnabled },
-                        set: { appState.store.setSmartBilingualEnabled($0) }
-                    ))
-
-                    Toggle("Spelling Autocorrect", isOn: Binding(
-                        get: { appState.store.configuration.spellingAutocorrectEnabled },
-                        set: { appState.store.setSpellingAutocorrectEnabled($0) }
-                    ))
-
-                    Toggle("Text Snippets", isOn: Binding(
-                        get: { appState.store.configuration.textSnippetsEnabled },
-                        set: { appState.store.setTextSnippetsEnabled($0) }
-                    ))
-
-                    if appState.store.configuration.smartBilingualEnabled {
-                        Stepper(value: Binding(
-                            get: { appState.store.configuration.smartBilingualUndoDelay },
-                            set: { appState.store.setSmartBilingualUndoDelay($0) }
-                        ), in: 0.5...5.0, step: 0.1) {
-                            Text(String(format: "Undo delay: %.1f seconds", appState.store.configuration.smartBilingualUndoDelay))
-                        }
-                        .padding(.leading, 16)
+                    Button("Choose Modules…") {
+                        appState.selectedSidebarSection = .overview
                     }
                 }
 
-                Section("Defaults for all apps") {
-                    Toggle("Auto-switch layout in every app", isOn: Binding(
-                        get: { appState.store.configuration.defaultAutoSwitchEnabled },
-                        set: { appState.store.setDefaultAutoSwitchEnabled($0) }
-                    ))
+                if appState.store.configuration.isModuleAdded(.layoutSwitching) {
+                    Section("Layout Switching") {
+                        Toggle("Automatic switching", isOn: Binding(
+                            get: { appState.store.configuration.automationEnabled },
+                            set: { appState.store.setAutomationEnabled($0) }
+                        ))
 
-                    if appState.store.configuration.defaultAutoSwitchEnabled {
-                        Picker("Default switches to", selection: Binding(
-                            get: { defaultAutoSwitchSelection },
-                            set: { setDefaultAutoSwitchSelection($0) }
-                        )) {
-                            Text("Last Used").tag("lastUsed")
-                            ForEach(appState.store.configuration.profiles) { profile in
-                                Text(profile.name).tag("profile:\(profile.id.uuidString)")
+                        Toggle("Auto-switch layout in every app", isOn: Binding(
+                            get: { appState.store.configuration.defaultAutoSwitchEnabled },
+                            set: { appState.store.setDefaultAutoSwitchEnabled($0) }
+                        ))
+
+                        if appState.store.configuration.defaultAutoSwitchEnabled {
+                            Picker("Default switches to", selection: Binding(
+                                get: { defaultAutoSwitchSelection },
+                                set: { setDefaultAutoSwitchSelection($0) }
+                            )) {
+                                Text("Last Used").tag("lastUsed")
+                                ForEach(appState.store.configuration.profiles) { profile in
+                                    Text(profile.name).tag("profile:\(profile.id.uuidString)")
+                                }
                             }
-                        }
-                        .padding(.leading, 16)
-
-                        Text("Applies to apps without their own rule. Disable auto-switching on a specific app to opt it out.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                             .padding(.leading, 16)
+
+                            Text("Applies to apps without their own rule. Disable auto-switching on a specific app to opt it out.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 16)
+                        }
+
                     }
+                }
 
-                    Toggle("Smart RU/EN autocorrect in every app", isOn: Binding(
-                        get: { appState.store.configuration.smartBilingualApplyToAll },
-                        set: { appState.store.setSmartBilingualApplyToAll($0) }
-                    ))
-                    .disabled(!appState.store.configuration.smartBilingualEnabled)
-
-                    Toggle("Smart Danish input in every app", isOn: Binding(
-                        get: { appState.store.configuration.smartDanishApplyToAll },
-                        set: { appState.store.setSmartDanishApplyToAll($0) }
-                    ))
-                    .disabled(!appState.store.configuration.smartDanishInputEnabled)
+                if appState.store.configuration.isModuleAdded(.smartBilingual) {
+                    Section("Writing Assistance") {
+                        Toggle("Spelling Autocorrect", isOn: Binding(
+                            get: { appState.store.configuration.spellingAutocorrectEnabled },
+                            set: { appState.store.setSpellingAutocorrectEnabled($0) }
+                        ))
+                    }
                 }
 
                 Section("Startup") {

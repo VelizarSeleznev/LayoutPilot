@@ -182,18 +182,32 @@ final class LayoutPilotCoreTests: XCTestCase {
         )
     }
 
-    func testStoreUpsertsAndDeduplicatesTextSnippets() throws {
+    func testStoreValidatesTextSnippetsWithoutMergingDuplicateTriggers() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileURL = tempDirectory.appendingPathComponent("configuration.json")
         let store = LayoutPilotStore(fileURL: fileURL)
 
-        store.upsertTextSnippet(TextSnippet(trigger: " @@email ", replacement: "first@example.com"))
-        store.upsertTextSnippet(TextSnippet(trigger: "@@email", replacement: "second@example.com"))
-        store.upsertTextSnippet(TextSnippet(trigger: "", replacement: "ignored"))
+        let first = store.saveTextSnippet(TextSnippet(
+            name: "Email",
+            trigger: " @@email ",
+            replacement: "first@example.com"
+        ))
+        let duplicate = store.saveTextSnippet(TextSnippet(
+            name: "Other email",
+            trigger: "@@email",
+            replacement: "second@example.com"
+        ))
+        let empty = store.saveTextSnippet(TextSnippet(name: "Empty", trigger: "", replacement: "ignored"))
 
+        guard case .success(let saved) = first else {
+            return XCTFail("Expected the first snippet to save")
+        }
+        XCTAssertEqual(saved.trigger, "@@email")
+        XCTAssertEqual(duplicate, .failure(.duplicateTrigger(existingName: "Email")))
+        XCTAssertEqual(empty, .failure(.emptyTrigger))
         XCTAssertEqual(store.configuration.textSnippets.count, 1)
         XCTAssertEqual(store.configuration.textSnippets.first?.trigger, "@@email")
-        XCTAssertEqual(store.configuration.textSnippets.first?.replacement, "second@example.com")
+        XCTAssertEqual(store.configuration.textSnippets.first?.replacement, "first@example.com")
     }
 
     func testTextSnippetDefaultsForExistingConfigurations() throws {
@@ -211,6 +225,108 @@ final class LayoutPilotCoreTests: XCTestCase {
 
         XCTAssertTrue(configuration.textSnippetsEnabled)
         XCTAssertTrue(configuration.textSnippets.isEmpty)
+        XCTAssertEqual(configuration.addedModules, Set(FeatureModule.allCases))
+        XCTAssertTrue(configuration.moduleSelectionCompleted)
+    }
+
+    func testNewConfigurationStartsWithModuleChooser() {
+        let configuration = LayoutPilotConfiguration.default()
+
+        XCTAssertTrue(configuration.addedModules.isEmpty)
+        XCTAssertFalse(configuration.moduleSelectionCompleted)
+        XCTAssertEqual(SidebarSection.visibleCases(for: configuration.addedModules), [.overview, .settings])
+        XCTAssertFalse(configuration.isLayoutSwitchingActive)
+        XCTAssertFalse(configuration.isSmartDanishActive)
+        XCTAssertFalse(configuration.isSmartBilingualActive)
+        XCTAssertFalse(configuration.areTextSnippetsActive)
+    }
+
+    func testModuleMembershipGatesRuntimeSwitches() {
+        var configuration = LayoutPilotConfiguration.default()
+        configuration.addedModules = [.snippets, .smartDanish]
+
+        XCTAssertTrue(configuration.areTextSnippetsActive)
+        XCTAssertTrue(configuration.isSmartDanishActive)
+        XCTAssertFalse(configuration.isSmartBilingualActive)
+        XCTAssertFalse(configuration.isLayoutSwitchingActive)
+
+        configuration.textSnippetsEnabled = false
+        configuration.smartDanishInputEnabled = false
+        XCTAssertFalse(configuration.areTextSnippetsActive)
+        XCTAssertFalse(configuration.isSmartDanishActive)
+    }
+
+    func testLegacySnippetDecodesWithTriggerAsName() throws {
+        let data = """
+        {
+          "id": "D5A1466C-3E0B-42E9-88A1-842FD24679D2",
+          "trigger": ";sig",
+          "replacement": "Best regards",
+          "isEnabled": true
+        }
+        """.data(using: .utf8)!
+
+        let snippet = try JSONDecoder().decode(TextSnippet.self, from: data)
+
+        XCTAssertEqual(snippet.name, ";sig")
+        XCTAssertNil(snippet.groupID)
+        XCTAssertNil(snippet.applicationScopeOverride)
+    }
+
+    func testSnippetScopeInheritanceAndOverride() {
+        let group = TextSnippetGroup(
+            name: "Work",
+            applicationScope: SnippetApplicationScope(
+                mode: .onlySelected,
+                bundleIDs: ["com.apple.mail"]
+            )
+        )
+        let inherited = TextSnippet(name: "Signature", trigger: ";sig", replacement: "Regards", groupID: group.id)
+        let overridden = TextSnippet(
+            name: "Everywhere",
+            trigger: ";all",
+            replacement: "Hello",
+            groupID: group.id,
+            applicationScopeOverride: SnippetApplicationScope(mode: .allApplications)
+        )
+
+        XCTAssertTrue(TextSnippetPolicy.allows(inherited, in: "com.apple.mail", groups: [group]))
+        XCTAssertFalse(TextSnippetPolicy.allows(inherited, in: "com.apple.Notes", groups: [group]))
+        XCTAssertTrue(TextSnippetPolicy.allows(overridden, in: "com.apple.Notes", groups: [group]))
+    }
+
+    func testSnippetAllExceptScope() {
+        let snippet = TextSnippet(
+            name: "Greeting",
+            trigger: ";hi",
+            replacement: "Hello",
+            applicationScopeOverride: SnippetApplicationScope(
+                mode: .allExceptSelected,
+                bundleIDs: ["com.example.Blocked"]
+            )
+        )
+
+        XCTAssertFalse(TextSnippetPolicy.allows(snippet, in: "com.example.Blocked", groups: []))
+        XCTAssertTrue(TextSnippetPolicy.allows(snippet, in: "com.apple.Notes", groups: []))
+        XCTAssertFalse(TextSnippetPolicy.allows(snippet, in: "com.apple.Terminal", groups: []))
+    }
+
+    func testDeletingSnippetFolderKeepsSnippetsUngrouped() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+        let group = TextSnippetGroup(name: "Work")
+        XCTAssertNotNil(store.saveTextSnippetGroup(group))
+        let snippet = TextSnippet(name: "Signature", trigger: ";sig", replacement: "Regards", groupID: group.id)
+        guard case .success = store.saveTextSnippet(snippet) else {
+            return XCTFail("Expected snippet to save")
+        }
+
+        store.deleteTextSnippetGroup(id: group.id)
+
+        XCTAssertTrue(store.configuration.textSnippetGroups.isEmpty)
+        XCTAssertNil(store.configuration.textSnippets.first?.groupID)
     }
 
     func testStoreMigratesDefaultSpotlightUSRuleToLastUsedWhenDefaultIsLastUsed() throws {
@@ -846,6 +962,26 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertNil(service.textSnippet(for: "disabled"))
     }
 
+    func testSnippetLookupRespectsApplicationScope() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        let group = TextSnippetGroup(
+            name: "Mail",
+            applicationScope: SnippetApplicationScope(mode: .onlySelected, bundleIDs: ["com.apple.mail"])
+        )
+        service.textSnippetGroups = [group]
+        service.textSnippets = [
+            TextSnippet(name: "Signature", trigger: ";sig", replacement: "Regards", groupID: group.id)
+        ]
+
+        XCTAssertNotNil(service.textSnippet(for: ";sig", bundleID: "com.apple.mail"))
+        XCTAssertNil(service.textSnippet(for: ";sig", bundleID: "com.apple.Notes"))
+        XCTAssertTrue(service.isSnippetTriggerContinuation(";s", bundleID: "com.apple.mail"))
+        XCTAssertFalse(service.isSnippetTriggerContinuation(";s", bundleID: "com.apple.Notes"))
+    }
+
     func testWebsiteRulesMatchingAndAutoSwitching() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileURL = tempDirectory.appendingPathComponent("configuration.json")
@@ -911,16 +1047,20 @@ final class LayoutPilotCoreTests: XCTestCase {
     }
 
     func testVisibleSidebarSectionsHideDeveloperFeaturesAndIncludeSettings() {
-        XCTAssertEqual(SidebarSection.visibleCases, [
+        XCTAssertEqual(SidebarSection.visibleCases(for: Set(FeatureModule.allCases)), [
             .overview,
+            .snippets,
+            .smartDanish,
+            .smartBilingual,
             .rules,
             .websites,
             .profiles,
-            .snippets,
             .settings
         ])
-        XCTAssertFalse(SidebarSection.visibleCases.contains(.chat))
-        XCTAssertFalse(SidebarSection.visibleCases.contains(.diagnostics))
+        let visible = SidebarSection.visibleCases(for: [.snippets])
+        XCTAssertEqual(visible, [.overview, .snippets, .settings])
+        XCTAssertFalse(visible.contains(.chat))
+        XCTAssertFalse(visible.contains(.diagnostics))
     }
 
     func testBrowserURLServiceExtractsNormalizedDomain() {

@@ -1,5 +1,28 @@
 import Foundation
 
+public enum TextSnippetValidationError: LocalizedError, Equatable {
+    case emptyName
+    case emptyTrigger
+    case emptyReplacement
+    case duplicateTrigger(existingName: String)
+    case persistenceFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptyName:
+            return "Enter a name for this snippet."
+        case .emptyTrigger:
+            return "Enter a trigger."
+        case .emptyReplacement:
+            return "Enter the text LayoutPilot should type."
+        case .duplicateTrigger(let existingName):
+            return "This trigger is already used by \(existingName)."
+        case .persistenceFailed(let message):
+            return "The snippet could not be saved: \(message)"
+        }
+    }
+}
+
 @MainActor
 @Observable
 public final class LayoutPilotStore {
@@ -277,28 +300,86 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setModuleAdded(_ module: FeatureModule, isAdded: Bool) {
+        var updated = configuration
+        if isAdded {
+            updated.addedModules.insert(module)
+        } else {
+            updated.addedModules.remove(module)
+        }
+        configuration = updated
+    }
+
+    public func completeModuleSelection() {
+        var updated = configuration
+        updated.moduleSelectionCompleted = true
+        configuration = updated
+    }
+
+    @available(*, deprecated, message: "Use saveTextSnippet(_:) to receive validation errors.")
     public func upsertTextSnippet(_ snippet: TextSnippet) {
-        guard let normalized = Self.normalizedTextSnippet(snippet) else {
-            return
+        _ = saveTextSnippet(snippet)
+    }
+
+    @discardableResult
+    public func saveTextSnippet(_ snippet: TextSnippet) -> Result<TextSnippet, TextSnippetValidationError> {
+        let normalized: TextSnippet
+        switch Self.validatedTextSnippet(snippet, existing: configuration.textSnippets) {
+        case .success(let value):
+            normalized = value
+        case .failure(let error):
+            return .failure(error)
         }
 
         var updated = configuration
-        if let index = updated.textSnippets.firstIndex(where: { $0.id == normalized.id || $0.trigger == normalized.trigger }) {
-            let existingID = updated.textSnippets[index].id
-            var replacement = normalized
-            replacement.id = existingID
-            updated.textSnippets.removeAll { $0.id == snippet.id || $0.trigger == normalized.trigger }
-            updated.textSnippets.insert(replacement, at: min(index, updated.textSnippets.count))
+        if let index = updated.textSnippets.firstIndex(where: { $0.id == normalized.id }) {
+            updated.textSnippets[index] = normalized
         } else {
             updated.textSnippets.append(normalized)
         }
-        updated.textSnippets = Self.deduplicatedTextSnippets(updated.textSnippets)
         configuration = updated
+
+        if let lastErrorMessage {
+            return .failure(.persistenceFailed(lastErrorMessage))
+        }
+        return .success(normalized)
     }
 
     public func deleteTextSnippet(id: UUID) {
         var updated = configuration
         updated.textSnippets.removeAll { $0.id == id }
+        configuration = updated
+    }
+
+    @discardableResult
+    public func saveTextSnippetGroup(_ group: TextSnippetGroup) -> TextSnippetGroup? {
+        var normalized = group
+        normalized.name = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.name.isEmpty else { return nil }
+        normalized.applicationScope = Self.normalizedScope(group.applicationScope)
+
+        var updated = configuration
+        if let index = updated.textSnippetGroups.firstIndex(where: { $0.id == group.id }) {
+            updated.textSnippetGroups[index] = normalized
+        } else {
+            updated.textSnippetGroups.append(normalized)
+        }
+        updated.textSnippetGroups.sort {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        configuration = updated
+        return normalized
+    }
+
+    public func deleteTextSnippetGroup(id: UUID) {
+        var updated = configuration
+        updated.textSnippetGroups.removeAll { $0.id == id }
+        updated.textSnippets = updated.textSnippets.map { snippet in
+            guard snippet.groupID == id else { return snippet }
+            var ungrouped = snippet
+            ungrouped.groupID = nil
+            return ungrouped
+        }
         configuration = updated
     }
 
@@ -361,7 +442,16 @@ public final class LayoutPilotStore {
             }
         }
         configuration.rules = deduplicatedRules(configuration.rules)
-        configuration.textSnippets = deduplicatedTextSnippets(configuration.textSnippets)
+        configuration.textSnippetGroups = normalizedTextSnippetGroups(configuration.textSnippetGroups)
+        let validGroupIDs = Set(configuration.textSnippetGroups.map(\.id))
+        configuration.textSnippets = deduplicatedTextSnippets(configuration.textSnippets).map { snippet in
+            guard let groupID = snippet.groupID, !validGroupIDs.contains(groupID) else {
+                return snippet
+            }
+            var ungrouped = snippet
+            ungrouped.groupID = nil
+            return ungrouped
+        }
         configuration.websiteRules = deduplicatedWebsiteRules(configuration.websiteRules)
         return configuration
     }
@@ -408,11 +498,41 @@ public final class LayoutPilotStore {
 
     private static func normalizedTextSnippet(_ snippet: TextSnippet) -> TextSnippet? {
         var normalized = snippet
+        normalized.name = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
         normalized.trigger = snippet.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.trigger.isEmpty, !normalized.replacement.isEmpty else {
+        if let scope = snippet.applicationScopeOverride {
+            normalized.applicationScopeOverride = normalizedScope(scope)
+        }
+        guard !normalized.name.isEmpty,
+              !normalized.trigger.isEmpty,
+              !normalized.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return normalized
+    }
+
+    private static func validatedTextSnippet(
+        _ snippet: TextSnippet,
+        existing: [TextSnippet]
+    ) -> Result<TextSnippet, TextSnippetValidationError> {
+        var normalized = snippet
+        normalized.name = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalized.trigger = snippet.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let scope = snippet.applicationScopeOverride {
+            normalized.applicationScopeOverride = normalizedScope(scope)
+        }
+
+        guard !normalized.name.isEmpty else { return .failure(.emptyName) }
+        guard !normalized.trigger.isEmpty else { return .failure(.emptyTrigger) }
+        guard !normalized.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(.emptyReplacement)
+        }
+        if let duplicate = existing.first(where: {
+            $0.id != normalized.id && $0.trigger == normalized.trigger
+        }) {
+            return .failure(.duplicateTrigger(existingName: duplicate.name))
+        }
+        return .success(normalized)
     }
 
     private static func deduplicatedTextSnippets(_ snippets: [TextSnippet]) -> [TextSnippet] {
@@ -432,6 +552,24 @@ public final class LayoutPilotStore {
         }
 
         return result
+    }
+
+    private static func normalizedTextSnippetGroups(_ groups: [TextSnippetGroup]) -> [TextSnippetGroup] {
+        var seen = Set<UUID>()
+        return groups.compactMap { group in
+            guard seen.insert(group.id).inserted else { return nil }
+            var normalized = group
+            normalized.name = group.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.name.isEmpty else { return nil }
+            normalized.applicationScope = normalizedScope(group.applicationScope)
+            return normalized
+        }.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private static func normalizedScope(_ scope: SnippetApplicationScope) -> SnippetApplicationScope {
+        SnippetApplicationScope(mode: scope.mode, bundleIDs: scope.bundleIDs)
     }
 
     private static func deduplicatedWebsiteRules(_ rules: [WebsiteLayoutRule]) -> [WebsiteLayoutRule] {
