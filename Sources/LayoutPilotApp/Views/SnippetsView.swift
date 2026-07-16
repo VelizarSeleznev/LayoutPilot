@@ -24,7 +24,7 @@ struct SnippetsView: View {
     var body: some View {
         HStack(spacing: 0) {
             listPane
-                .frame(minWidth: 310, idealWidth: 350, maxWidth: 390)
+                .frame(minWidth: 270, idealWidth: 320, maxWidth: 350)
 
             Divider()
 
@@ -327,17 +327,19 @@ struct SnippetsView: View {
                                 .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                         }
 
-                        LabeledContent("Name") {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("Name").font(.headline)
                             TextField("e.g. Work signature", text: $draft.name)
                                 .textFieldStyle(.roundedBorder)
-                                .frame(minWidth: 320)
+                                .frame(maxWidth: .infinity)
                         }
 
-                        LabeledContent("Trigger") {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("Trigger").font(.headline)
                             TextField("e.g. ;sig", text: $draft.trigger)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.body.monospaced())
-                                .frame(minWidth: 320)
+                                .frame(maxWidth: .infinity)
                         }
 
                         VStack(alignment: .leading, spacing: 7) {
