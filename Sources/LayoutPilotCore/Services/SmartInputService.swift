@@ -1721,8 +1721,12 @@ public final class SmartInputService: @unchecked Sendable {
             sourceLayoutID: sourceLayoutID,
             targetLayoutID: candidate.targetLayoutID
         ) {
-            var shouldBypass = false
-            if suppressionReason == "accepted_word_dictionary" {
+            var shouldBypass = isForcedBilingualConversion(
+                original: token,
+                replacement: candidate.replacement,
+                sourceLayoutID: sourceLayoutID
+            )
+            if !shouldBypass, suppressionReason == "accepted_word_dictionary" {
                 let isUS = usInputSources.contains(sourceLayoutID)
                 let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
                                 sourceLayoutID.hasSuffix(".ru") ||
@@ -1756,6 +1760,16 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         return candidate
+    }
+
+    private func isForcedBilingualConversion(
+        original: String,
+        replacement: String,
+        sourceLayoutID: String
+    ) -> Bool {
+        usInputSources.contains(sourceLayoutID) &&
+            original.lowercased() == "rfr" &&
+            replacement.lowercased() == "как"
     }
 
     private func checkBilingualConversion(

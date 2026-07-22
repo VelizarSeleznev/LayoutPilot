@@ -756,7 +756,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertNotNil(rfrUSAfterAccepted)
         XCTAssertEqual(rfrUSAfterAccepted?.replacement, "как")
 
-        // Record 2 rejections for 'rfr' -> 'как' conversion
+        // Record 2 rejections for 'rfr' -> 'как' conversion.
         for _ in 0..<2 {
             service.learningStore.recordRejectedConversion(
                 mode: "bilingual",
@@ -767,9 +767,10 @@ final class LayoutPilotCoreTests: XCTestCase {
                 bundleID: "com.example.Test"
             )
         }
-        // Since it is explicitly rejected, it should be suppressed with 'user_rejected_conversion' which must NOT be bypassed!
+        // This ubiquitous wrong-layout word is intentionally forced even if stale
+        // learning data says that the user rejected it in the past.
         let rfrUSAfterRejected = service.checkBilingualConversion(for: "rfr", sourceLayoutID: "com.apple.keylayout.US")
-        XCTAssertNil(rfrUSAfterRejected)
+        XCTAssertEqual(rfrUSAfterRejected?.replacement, "как")
         
         guard let currentSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
               let rawID = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID) else {
