@@ -1176,6 +1176,103 @@ final class LayoutPilotCoreTests: XCTestCase {
         // Now "teh" should not be considered misspelled
         XCTAssertFalse(service.isMisspelled("teh", language: "en", layoutID: "com.apple.keylayout.US"))
     }
+
+    func testAcceptedWordsAreScopedToLayoutAndIgnoreNonWords() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let learningURL = tempDirectory.appendingPathComponent("learning.json")
+        let learningStore = SmartInputLearningStore(fileURL: learningURL)
+
+        for _ in 0..<3 {
+            learningStore.recordAcceptedWord("teh", layoutID: "com.apple.keylayout.US", bundleID: "com.apple.Notes")
+            learningStore.recordAcceptedWord("123", layoutID: "com.apple.keylayout.US", bundleID: "com.apple.Notes")
+            learningStore.recordAcceptedWord("abc123", layoutID: "com.apple.keylayout.US", bundleID: "com.apple.Notes")
+        }
+
+        XCTAssertTrue(learningStore.isWordAccepted("teh", layoutID: "com.apple.keylayout.US"))
+        XCTAssertFalse(learningStore.isWordAccepted("teh", layoutID: "com.apple.keylayout.RussianWin"))
+        XCTAssertFalse(learningStore.isWordAccepted("123", layoutID: "com.apple.keylayout.US"))
+        XCTAssertFalse(learningStore.isWordAccepted("abc123", layoutID: "com.apple.keylayout.US"))
+
+        learningStore.flushPendingWrites()
+        let reloaded = SmartInputLearningStore(fileURL: learningURL)
+        XCTAssertTrue(reloaded.isWordAccepted("teh", layoutID: "com.apple.keylayout.US"))
+    }
+
+    func testRejectedConversionsAreScopedToApplication() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let learningURL = tempDirectory.appendingPathComponent("learning.json")
+        let learningStore = SmartInputLearningStore(fileURL: learningURL)
+
+        learningStore.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Editor"
+        )
+        learningStore.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Other"
+        )
+
+        XCTAssertNil(learningStore.suppressionReason(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Editor"
+        ))
+
+        learningStore.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Editor"
+        )
+
+        XCTAssertEqual(
+            learningStore.suppressionReason(
+                mode: "bilingual",
+                original: "инпут",
+                replacement: "bygen",
+                sourceLayoutID: "com.apple.keylayout.RussianWin",
+                targetLayoutID: "com.apple.keylayout.US",
+                bundleID: "com.example.Editor"
+            ),
+            "user_rejected_conversion"
+        )
+        XCTAssertNil(learningStore.suppressionReason(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Other"
+        ))
+    }
+
+    func testEventLogSkipsBackspaceBufferNoise() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let logURL = tempDirectory.appendingPathComponent("events.jsonl")
+        let eventLog = SmartInputEventLog(fileURL: logURL)
+
+        eventLog.record(.init(kind: "backspace_buffer_update", bufferBefore: "word", bufferAfter: "wor"))
+        eventLog.record(.init(kind: "replacement", original: "rfr", replacement: "как"))
+
+        let lines = try String(contentsOf: logURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(lines.count, 1)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertEqual(try decoder.decode(SmartInputEventLog.Event.self, from: Data(lines[0].utf8)).kind, "replacement")
+    }
     
     func testSpellingSuggestions() {
         let service = SmartInputService.shared
@@ -1187,12 +1284,9 @@ final class LayoutPilotCoreTests: XCTestCase {
     func testBootstrapSpellingVocabularyFromLogs() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let learningURL = tempDirectory.appendingPathComponent("smart-input-learning.json")
+        let logURL = tempDirectory.appendingPathComponent("smart-input-events.jsonl")
         let learningStore = SmartInputLearningStore(fileURL: learningURL)
-        
-        // Let's create a temporary event log
-        let logURL = try LayoutPilotPaths.smartInputEventLogURL()
-        try? FileManager.default.removeItem(at: logURL)
-        
+
         let event = SmartInputEventLog.Event(
             kind: "replacement",
             mode: "bilingual",
@@ -1203,6 +1297,11 @@ final class LayoutPilotCoreTests: XCTestCase {
             kind: "accepted_word_promoted",
             original: "тестикслово"
         )
+        let event3 = SmartInputEventLog.Event(
+            kind: "backspace_buffer_update",
+            bufferBefore: "adsfasdf",
+            bufferAfter: "adsfasd"
+        )
         
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -1212,21 +1311,23 @@ final class LayoutPilotCoreTests: XCTestCase {
         line1.append(0x0A)
         var line2 = try encoder.encode(event2)
         line2.append(0x0A)
-        
+        var line3 = try encoder.encode(event3)
+        line3.append(0x0A)
+
         try FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try (line1 + line2).write(to: logURL)
-        
-        // Bootstrap
-        learningStore.bootstrapSpellingVocabularyFromLogs(checker: NSSpellChecker.shared)
-        
+        try (line1 + line2 + line3).write(to: logURL)
+
+        learningStore.bootstrapSpellingVocabularyFromLogs(
+            checker: NSSpellChecker.shared,
+            logURLs: [logURL]
+        )
+
         // "привет" is correct in Russian, so it shouldn't be added to acceptedWords
         XCTAssertFalse(learningStore.isWordAccepted("привет"))
-        
+
         // "тестикслово" is misspelled, so it should be bootstrapped and accepted!
         XCTAssertTrue(learningStore.isWordAccepted("тестикслово"))
-        
-        // Cleanup log
-        try? FileManager.default.removeItem(at: logURL)
+        XCTAssertFalse(learningStore.isWordAccepted("adsfasdf"))
     }
 }
 

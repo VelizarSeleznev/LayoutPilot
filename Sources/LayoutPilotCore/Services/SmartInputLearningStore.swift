@@ -9,14 +9,21 @@ public final class SmartInputLearningStore: @unchecked Sendable {
     private let fileURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let persistenceQueue = DispatchQueue(
+        label: "com.velizard.LayoutPilot.smart-input-learning-persistence",
+        qos: .utility
+    )
     private let logger = Logger(
         subsystem: "com.velizard.LayoutPilot",
         category: "SmartInputLearning"
     )
 
     private var state: State
+    private var saveScheduled = false
     private let acceptedWordPromotionCount = 3
     private let rejectedConversionSuppressionCount = 2
+    private let acceptedWordLimit = 2_000
+    private let persistenceDelay = 2.0
 
     public convenience init() {
         let url = (try? LayoutPilotPaths.smartInputLearningURL()) ??
@@ -47,7 +54,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
     @discardableResult
     public func recordAcceptedWord(_ word: String, layoutID: String?, bundleID: String?) -> WordLearningOutcome {
         let normalized = Self.normalizedWord(word)
-        guard !normalized.isEmpty else {
+        guard Self.isLearnableWord(normalized, layoutID: layoutID) else {
             return WordLearningOutcome(count: 0, wasPromoted: false)
         }
 
@@ -62,15 +69,19 @@ public final class SmartInputLearningStore: @unchecked Sendable {
             count: 0,
             firstSeen: Date(),
             lastSeen: Date(),
-            bundleIDs: []
+            bundleIDs: [],
+            countsByBundleID: [:]
         )
         entry.count += 1
         entry.lastSeen = Date()
         if let bundleID, !bundleID.isEmpty {
             entry.bundleIDs.insert(bundleID)
+            var counts = entry.countsByBundleID ?? [:]
+            counts[bundleID, default: 0] += 1
+            entry.countsByBundleID = counts
         }
         state.acceptedWords[key] = entry
-        saveLocked()
+        scheduleSaveLocked()
 
         let wasPromoted = previousCount < acceptedWordPromotionCount &&
             entry.count >= acceptedWordPromotionCount
@@ -110,6 +121,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
             targetLayoutID: targetLayoutID,
             acceptedCount: 0,
             rejectedCount: 0,
+            rejectedCountsByBundleID: [:],
             firstSeen: Date(),
             lastSeen: Date(),
             bundleIDs: []
@@ -118,24 +130,33 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         entry.lastSeen = Date()
         if let bundleID, !bundleID.isEmpty {
             entry.bundleIDs.insert(bundleID)
+            var counts = entry.rejectedCountsByBundleID ?? [:]
+            counts[bundleID, default: 0] += 1
+            entry.rejectedCountsByBundleID = counts
         }
         state.conversions[key] = entry
 
-        let wordKey = Self.wordKey(word: original, layoutID: sourceLayoutID)
-        var wordEntry = state.acceptedWords[wordKey] ?? AcceptedWordEntry(
-            word: original,
-            layoutID: sourceLayoutID,
-            count: 0,
-            firstSeen: Date(),
-            lastSeen: Date(),
-            bundleIDs: []
-        )
-        wordEntry.count += 1
-        wordEntry.lastSeen = Date()
-        if let bundleID, !bundleID.isEmpty {
-            wordEntry.bundleIDs.insert(bundleID)
+        if Self.isLearnableWord(original, layoutID: sourceLayoutID) {
+            let wordKey = Self.wordKey(word: original, layoutID: sourceLayoutID)
+            var wordEntry = state.acceptedWords[wordKey] ?? AcceptedWordEntry(
+                word: original,
+                layoutID: sourceLayoutID,
+                count: 0,
+                firstSeen: Date(),
+                lastSeen: Date(),
+                bundleIDs: [],
+                countsByBundleID: [:]
+            )
+            wordEntry.count += 1
+            wordEntry.lastSeen = Date()
+            if let bundleID, !bundleID.isEmpty {
+                wordEntry.bundleIDs.insert(bundleID)
+                var counts = wordEntry.countsByBundleID ?? [:]
+                counts[bundleID, default: 0] += 1
+                wordEntry.countsByBundleID = counts
+            }
+            state.acceptedWords[wordKey] = wordEntry
         }
-        state.acceptedWords[wordKey] = wordEntry
 
         saveLocked()
         logger.info("Rejected smart-input conversion mode=\(mode, privacy: .public) originalLength=\(original.count, privacy: .public) replacementLength=\(replacement.count, privacy: .public)")
@@ -146,7 +167,8 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         original: String,
         replacement: String,
         sourceLayoutID: String?,
-        targetLayoutID: String?
+        targetLayoutID: String?,
+        bundleID: String? = nil
     ) -> String? {
         let original = Self.normalizedWord(original)
         let replacement = Self.normalizedWord(replacement)
@@ -163,16 +185,22 @@ public final class SmartInputLearningStore: @unchecked Sendable {
             targetLayoutID: targetLayoutID
         )
         if let conversion = state.conversions[key] {
-            return conversion.rejectedCount >= rejectedConversionSuppressionCount
-                ? "user_rejected_conversion"
-                : nil
+            let rejectedCount = bundleID.flatMap {
+                conversion.rejectedCountsByBundleID?[$0]
+            } ?? (bundleID == nil ? conversion.rejectedCount : 0)
+            if rejectedCount >= rejectedConversionSuppressionCount {
+                return "user_rejected_conversion"
+            }
         }
 
         let wordKey = Self.wordKey(word: original, layoutID: sourceLayoutID)
-        if let accepted = state.acceptedWords[wordKey],
-           accepted.count >= acceptedWordPromotionCount,
-           original.count >= 2 {
-            return "accepted_word_dictionary"
+        if let accepted = state.acceptedWords[wordKey], original.count >= 2 {
+            let acceptedCount = bundleID.flatMap {
+                accepted.countsByBundleID?[$0]
+            } ?? (bundleID == nil ? accepted.count : 0)
+            if acceptedCount >= acceptedWordPromotionCount {
+                return "accepted_word_dictionary"
+            }
         }
 
         return nil
@@ -199,7 +227,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         for line in text.split(separator: "\n") {
             guard let data = line.data(using: .utf8),
                   let event = try? decoder.decode(SmartInputEventLog.Event.self, from: data),
-                  event.kind == "replacement_undo" || event.kind == "backspace_after_replacement_window",
+                  event.kind == "replacement_undo",
                   let mode = event.mode,
                   let original = event.original,
                   let replacement = event.replacement else {
@@ -227,14 +255,21 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         }
     }
 
-    public func isWordAccepted(_ word: String) -> Bool {
+    public func isWordAccepted(_ word: String, layoutID: String? = nil) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         let normalized = Self.normalizedWord(word)
+        if let layoutID {
+            let key = Self.wordKey(word: normalized, layoutID: layoutID)
+            return (state.acceptedWords[key]?.count ?? 0) >= acceptedWordPromotionCount
+        }
         return state.acceptedWords.values.contains { $0.word == normalized && $0.count >= acceptedWordPromotionCount }
     }
 
-    public func bootstrapSpellingVocabularyFromLogs(checker: NSSpellChecker) {
+    public func bootstrapSpellingVocabularyFromLogs(
+        checker: NSSpellChecker,
+        logURLs suppliedLogURLs: [URL]? = nil
+    ) {
         lock.lock()
         let shouldBootstrap = !(state.bootstrappedSpellingVocabulary ?? false)
         lock.unlock()
@@ -243,16 +278,19 @@ public final class SmartInputLearningStore: @unchecked Sendable {
 
         // Read both log files
         let logURLs: [URL]
-        do {
-            let primaryLog = try LayoutPilotPaths.smartInputEventLogURL()
-            let rotatedLog = primaryLog.deletingLastPathComponent().appendingPathComponent(primaryLog.lastPathComponent + ".1")
-            logURLs = [rotatedLog, primaryLog] // Read older rotated log first
-        } catch {
-            return
+        if let suppliedLogURLs {
+            logURLs = suppliedLogURLs
+        } else {
+            do {
+                let primaryLog = try LayoutPilotPaths.smartInputEventLogURL()
+                let rotatedLog = primaryLog.deletingLastPathComponent().appendingPathComponent(primaryLog.lastPathComponent + ".1")
+                logURLs = [rotatedLog, primaryLog]
+            } catch {
+                return
+            }
         }
 
         var uniqueWords = Set<String>()
-        let letterSet = CharacterSet.letters
 
         for url in logURLs {
             guard FileManager.default.fileExists(atPath: url.path),
@@ -263,19 +301,12 @@ public final class SmartInputLearningStore: @unchecked Sendable {
             let lines = text.split(separator: "\n")
             for line in lines {
                 guard let data = line.data(using: .utf8),
-                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                      let event = try? decoder.decode(SmartInputEventLog.Event.self, from: data),
+                      event.kind == "accepted_word_promoted",
+                      let word = event.original else {
                     continue
                 }
-                
-                let fields = ["original", "replacement", "bufferBefore", "bufferAfter"]
-                for field in fields {
-                    if let val = dict[field] as? String {
-                        extractWords(from: val, into: &uniqueWords, letterSet: letterSet)
-                    }
-                }
-                if let val = dict["summary"] as? String {
-                    extractWords(from: val, into: &uniqueWords, letterSet: letterSet)
-                }
+                uniqueWords.insert(Self.normalizedWord(word))
             }
         }
 
@@ -328,7 +359,8 @@ public final class SmartInputLearningStore: @unchecked Sendable {
                     count: 0,
                     firstSeen: Date(),
                     lastSeen: Date(),
-                    bundleIDs: []
+                    bundleIDs: [],
+                    countsByBundleID: [:]
                 )
                 entry.count = max(entry.count, acceptedWordPromotionCount)
                 entry.lastSeen = Date()
@@ -344,21 +376,24 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         logger.info("Completed spelling bootstrap. Added \(addedCount) misspelled-but-user-approved words to local dictionary.")
     }
 
-    private func extractWords(from text: String, into uniqueWords: inout Set<String>, letterSet: CharacterSet) {
-        let scanner = Scanner(string: text)
-        while !scanner.isAtEnd {
-            if let word = scanner.scanCharacters(from: letterSet) {
-                if word.count >= 2 {
-                    uniqueWords.insert(word.lowercased())
-                }
-            } else {
-                _ = scanner.scanUpToCharacters(from: letterSet)
-            }
+    func flushPendingWrites() {
+        lock.lock()
+        saveScheduled = false
+        saveLocked()
+        lock.unlock()
+    }
+
+    private func scheduleSaveLocked() {
+        guard !saveScheduled else { return }
+        saveScheduled = true
+        persistenceQueue.asyncAfter(deadline: .now() + persistenceDelay) { [weak self] in
+            self?.flushPendingWrites()
         }
     }
 
     private func saveLocked() {
         do {
+            pruneAcceptedWordsLocked()
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -370,8 +405,48 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         }
     }
 
+    private func pruneAcceptedWordsLocked() {
+        guard state.acceptedWords.count > acceptedWordLimit else { return }
+        let retained = state.acceptedWords
+            .sorted { lhs, rhs in
+                if lhs.value.count != rhs.value.count {
+                    return lhs.value.count > rhs.value.count
+                }
+                return lhs.value.lastSeen > rhs.value.lastSeen
+            }
+            .prefix(acceptedWordLimit)
+        state.acceptedWords = Dictionary(
+            uniqueKeysWithValues: retained.map { ($0.key, $0.value) }
+        )
+    }
+
     private static func normalizedWord(_ word: String) -> String {
         word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func isLearnableWord(_ word: String, layoutID: String?) -> Bool {
+        guard word.count >= 2 else { return false }
+        let characters = Array(word)
+        guard characters.first?.unicodeScalars.allSatisfy(CharacterSet.letters.contains) == true,
+              characters.last?.unicodeScalars.allSatisfy(CharacterSet.letters.contains) == true else {
+            return false
+        }
+
+        for character in characters {
+            if character == "'" || character == "’" { continue }
+            guard character.unicodeScalars.allSatisfy(CharacterSet.letters.contains) else {
+                return false
+            }
+        }
+
+        let letters = word.unicodeScalars.filter(CharacterSet.letters.contains)
+        if layoutID == "com.apple.keylayout.US" || layoutID == "com.apple.keylayout.ABC" {
+            return letters.allSatisfy { (65...90).contains($0.value) || (97...122).contains($0.value) }
+        }
+        if layoutID?.localizedCaseInsensitiveContains("Russian") == true {
+            return letters.allSatisfy { (0x0400...0x04FF).contains($0.value) }
+        }
+        return true
     }
 
     public static func wordKey(word: String, layoutID: String?) -> String {
@@ -409,6 +484,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         var firstSeen: Date
         var lastSeen: Date
         var bundleIDs: Set<String>
+        var countsByBundleID: [String: Int]?
     }
 
     private struct ConversionEntry: Codable {
@@ -419,6 +495,7 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         var targetLayoutID: String?
         var acceptedCount: Int
         var rejectedCount: Int
+        var rejectedCountsByBundleID: [String: Int]?
         var firstSeen: Date
         var lastSeen: Date
         var bundleIDs: Set<String>

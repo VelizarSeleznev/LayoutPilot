@@ -725,11 +725,10 @@ public final class SmartInputService: @unchecked Sendable {
                 } else {
                     deactivateLastReplacement()
                     if last.boundary.isEmpty || last.boundaryBackspaceConsumed {
-                        recordRejectedConversionIfNeeded(last)
                         SmartInputEventLog.shared.record(.init(
                             kind: "backspace_after_replacement_window",
                             mode: last.mode,
-                            reason: "next input was backspace after undo window; learned rejected conversion",
+                            reason: "next input was backspace after undo window; no rejection learned",
                             bundleID: last.bundleID,
                             sourceLayoutID: last.originalLayoutID,
                             targetLayoutID: last.targetLayoutID,
@@ -739,8 +738,7 @@ public final class SmartInputService: @unchecked Sendable {
                             keyCode: keyCode,
                             bufferBefore: getBufferToken(),
                             elapsedSinceReplacement: elapsed,
-                            replacementAgeLimit: _smartBilingualUndoDelay,
-                            suppressionReason: "learned_user_rejection"
+                            replacementAgeLimit: _smartBilingualUndoDelay
                         ))
                     }
                 }
@@ -1719,7 +1717,8 @@ public final class SmartInputService: @unchecked Sendable {
             original: token,
             replacement: candidate.replacement,
             sourceLayoutID: sourceLayoutID,
-            targetLayoutID: candidate.targetLayoutID
+            targetLayoutID: candidate.targetLayoutID,
+            bundleID: bundleID
         ) {
             var shouldBypass = isForcedBilingualConversion(
                 original: token,
@@ -1963,7 +1962,8 @@ public final class SmartInputService: @unchecked Sendable {
             original: original,
             replacement: replacement,
             sourceLayoutID: candidate.sourceLayoutID,
-            targetLayoutID: candidate.targetLayoutID
+            targetLayoutID: candidate.targetLayoutID,
+            bundleID: candidate.bundleID
         ) == nil else {
             return nil
         }
@@ -2045,7 +2045,8 @@ public final class SmartInputService: @unchecked Sendable {
             original: candidate.original,
             replacement: candidate.replacement,
             sourceLayoutID: candidate.sourceLayoutID,
-            targetLayoutID: candidate.targetLayoutID
+            targetLayoutID: candidate.targetLayoutID,
+            bundleID: candidate.bundleID
         ) == "user_rejected_conversion"
     }
 
@@ -2302,7 +2303,7 @@ public final class SmartInputService: @unchecked Sendable {
         let normalized = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
         // 1. Check if word is accepted in our learning store
-        if learningStore.isWordAccepted(normalized) {
+        if learningStore.isWordAccepted(normalized, layoutID: layoutID) {
             return false
         }
         

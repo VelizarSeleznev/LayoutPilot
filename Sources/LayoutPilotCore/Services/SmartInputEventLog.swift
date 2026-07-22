@@ -6,17 +6,19 @@ public final class SmartInputEventLog: @unchecked Sendable {
 
     private let lock = NSLock()
     private let encoder: JSONEncoder
+    private let fileURL: URL?
     private let maxLogSizeBytes: UInt64 = 2 * 1024 * 1024
     private let logger = Logger(
         subsystem: "com.velizard.LayoutPilot",
         category: "SmartInput"
     )
 
-    public init() {
+    public init(fileURL: URL? = nil) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         self.encoder = encoder
+        self.fileURL = fileURL
     }
 
     public static func logURL() throws -> URL {
@@ -27,30 +29,32 @@ public final class SmartInputEventLog: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        do {
-            let url = try Self.logURL()
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try rotateLogIfNeeded(at: url)
+        if event.kind != "backspace_buffer_update" {
+            do {
+                let url = try fileURL ?? Self.logURL()
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try rotateLogIfNeeded(at: url)
 
-            let data = try encoder.encode(event)
-            var line = data
-            line.append(0x0A)
+                let data = try encoder.encode(event)
+                var line = data
+                line.append(0x0A)
 
-            if FileManager.default.fileExists(atPath: url.path) {
-                let handle = try FileHandle(forWritingTo: url)
-                defer { try? handle.close() }
-                try handle.seekToEnd()
-                try handle.write(contentsOf: line)
-            } else {
-                try line.write(to: url, options: [.atomic])
+                if FileManager.default.fileExists(atPath: url.path) {
+                    let handle = try FileHandle(forWritingTo: url)
+                    defer { try? handle.close() }
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: line)
+                } else {
+                    try line.write(to: url, options: [.atomic])
+                }
+
+                logger.info("Smart input event: \(event.summary ?? event.kind, privacy: .public)")
+            } catch {
+                logger.error("Failed to write smart input event: \(error.localizedDescription, privacy: .public)")
             }
-
-            logger.info("Smart input event: \(event.summary ?? event.kind, privacy: .public)")
-        } catch {
-            logger.error("Failed to write smart input event: \(error.localizedDescription, privacy: .public)")
         }
     }
 
