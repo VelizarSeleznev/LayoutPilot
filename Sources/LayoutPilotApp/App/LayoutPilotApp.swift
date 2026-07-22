@@ -35,5 +35,11 @@ private struct LayoutPilotCommands: Commands {
             }
             .keyboardShortcut(",", modifiers: .command)
         }
+
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                UpdaterService.shared.checkForUpdates()
+            }
+        }
     }
 }

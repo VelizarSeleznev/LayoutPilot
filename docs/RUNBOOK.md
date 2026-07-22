@@ -26,6 +26,15 @@ Persistent state is stored at:
 
 ## Releasing Updates
 
+The production feed is served from GitHub Pages at
+`https://velizarseleznev.github.io/LayoutPilot/appcast.xml`. The repository's
+Pages source must remain set to the `/docs` directory on the `main` branch.
+
+Installed builds check this feed every six hours. With automatic updates
+enabled, Sparkle downloads a signed update in the background and LayoutPilot
+restarts briefly to install it. Users can disable this or trigger a manual
+check from Settings.
+
 To publish a new update for LayoutPilot:
 
 1. Run the release automation script:

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var appState: LayoutPilotAppState
+    @ObservedObject private var updaterService = UpdaterService.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -118,6 +119,33 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Updates") {
+                    Toggle("Keep LayoutPilot up to date automatically", isOn: Binding(
+                        get: { updaterService.automaticUpdatesEnabled },
+                        set: { updaterService.setAutomaticUpdatesEnabled($0) }
+                    ))
+                    .disabled(!updaterService.isReady)
+
+                    HStack {
+                        Button("Check for Updates…") {
+                            updaterService.checkForUpdates()
+                        }
+                        .disabled(!updaterService.isReady)
+
+                        Spacer()
+
+                        if let lastCheck = updaterService.lastUpdateCheckDate {
+                            Text("Last checked \(lastCheck, format: .relative(presentation: .named))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text("Automatic updates are checked in the background, verified with the embedded Sparkle signing key, and installed with a quick app restart when ready.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Remote Experiment") {
                     if appState.store.configuration.remotePrankPackEnabled {
                         VStack(alignment: .leading, spacing: 4) {
@@ -169,6 +197,9 @@ struct SettingsView: View {
         }
         .padding(28)
         .navigationTitle("Settings")
+        .onAppear {
+            updaterService.refreshState()
+        }
     }
 
     private var defaultAutoSwitchSelection: String {

@@ -68,6 +68,9 @@ targets:
         SUPublicEDKey: kqP2g56I7yz/ruSxLBTKSFAKRhXefII0cwo9u1agIU8=
         SUEnableAutomaticChecks: true
         SUAutomaticallyUpdate: true
+        SUAllowsAutomaticUpdates: true
+        SUScheduledCheckInterval: 21600
+        SUScheduledImpatientCheckInterval: 86400
   LayoutPilotTests:
     type: bundle.unit-test
     platform: macOS

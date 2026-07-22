@@ -5,12 +5,6 @@
         <link>https://velizarseleznev.github.io/LayoutPilot/appcast.xml</link>
         <description>Most recent updates for LayoutPilot.</description>
         <language>en</language>
-        <!-- 
-        To release a new update:
-        1. Compile LayoutPilot.dmg using ./script/package_dmg.sh
-        2. Sign the DMG using ./script/sign_update.py LayoutPilot.dmg
-        3. Upload the DMG to GitHub Releases under tag vX.Y
-        4. Copy the generated <item> XML from the signing output, paste it here, and commit/push docs/appcast.xml to github.
-        -->
+        <!-- Publish signed updates with ./script/release.py. -->
     </channel>
 </rss>
