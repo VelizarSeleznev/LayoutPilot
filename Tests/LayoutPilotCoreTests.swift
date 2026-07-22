@@ -10,6 +10,36 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(configuration.profiles.count, 2)
         XCTAssertGreaterThanOrEqual(configuration.rules.count, 4)
         XCTAssertTrue(configuration.rules.contains { $0.applicationBundleID == SystemApplicationContexts.spotlight.bundleID })
+        XCTAssertEqual(configuration.smartInputLearningScope, .global)
+    }
+
+    func testSmartInputLearningScopeDefaultsToGlobalForExistingConfigurations() throws {
+        let missingScope = Data(#"{"profiles":[],"rules":[]}"#.utf8)
+        let unknownScope = Data(#"{"profiles":[],"rules":[],"smartInputLearningScope":"futureScope"}"#.utf8)
+
+        XCTAssertEqual(
+            try JSONDecoder().decode(LayoutPilotConfiguration.self, from: missingScope).smartInputLearningScope,
+            .global
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(LayoutPilotConfiguration.self, from: unknownScope).smartInputLearningScope,
+            .global
+        )
+    }
+
+    func testStorePersistsSmartInputLearningScope() {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        store.setSmartInputLearningScope(.perApplication)
+
+        XCTAssertEqual(store.configuration.smartInputLearningScope, .perApplication)
+        XCTAssertEqual(
+            LayoutPilotStore(fileURL: fileURL).configuration.smartInputLearningScope,
+            .perApplication
+        )
     }
 
     func testStoreCanUpsertAndDeleteRulesInTemporaryFile() throws {
@@ -1102,6 +1132,76 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertNil(afterRepeatedUndo)
     }
 
+    func testGlobalLearningUsesCorrectionsFromEveryApplication() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let store = SmartInputLearningStore(fileURL: storeURL)
+        let service = SmartInputService(learningStore: store)
+
+        store.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Editor"
+        )
+        store.recordRejectedConversion(
+            mode: "bilingual",
+            original: "инпут",
+            replacement: "bygen",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            targetLayoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Browser"
+        )
+
+        service.smartInputLearningScope = .global
+        XCTAssertNil(service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            bundleID: "com.example.Other"
+        ))
+    }
+
+    func testPerAppLearningKeepsCorrectionsIsolated() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let store = SmartInputLearningStore(fileURL: storeURL)
+        let service = SmartInputService(learningStore: store)
+
+        for _ in 0..<2 {
+            store.recordRejectedConversion(
+                mode: "bilingual",
+                original: "инпут",
+                replacement: "bygen",
+                sourceLayoutID: "com.apple.keylayout.RussianWin",
+                targetLayoutID: "com.apple.keylayout.US",
+                bundleID: "com.example.Editor"
+            )
+        }
+
+        service.smartInputLearningScope = .perApplication
+        XCTAssertNil(service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            bundleID: "com.example.Editor"
+        ))
+        XCTAssertEqual(service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            bundleID: "com.example.Other"
+        )?.replacement, "bygen")
+
+        service.smartInputLearningScope = .global
+        XCTAssertNil(service.checkBilingualConversion(
+            for: "инпут",
+            sourceLayoutID: "com.apple.keylayout.RussianWin",
+            bundleID: "com.example.Other"
+        ))
+    }
+
     func testSnippetLookupAndPrefixHandling() throws {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -1339,6 +1439,49 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertTrue(reloaded.isWordAccepted("teh", layoutID: "com.apple.keylayout.US"))
     }
 
+    func testAcceptedWordsFollowConfiguredLearningScope() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let learningURL = tempDirectory.appendingPathComponent("learning.json")
+        let learningStore = SmartInputLearningStore(fileURL: learningURL)
+        let service = SmartInputService(learningStore: learningStore)
+
+        for _ in 0..<3 {
+            learningStore.recordAcceptedWord(
+                "teh",
+                layoutID: "com.apple.keylayout.US",
+                bundleID: "com.apple.Notes"
+            )
+        }
+
+        service.smartInputLearningScope = .global
+        XCTAssertFalse(service.isMisspelled(
+            "teh",
+            language: "en",
+            layoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Other"
+        ))
+
+        service.smartInputLearningScope = .perApplication
+        XCTAssertFalse(service.isMisspelled(
+            "teh",
+            language: "en",
+            layoutID: "com.apple.keylayout.US",
+            bundleID: "com.apple.Notes"
+        ))
+        XCTAssertTrue(service.isMisspelled(
+            "teh",
+            language: "en",
+            layoutID: "com.apple.keylayout.US",
+            bundleID: "com.example.Other"
+        ))
+        XCTAssertFalse(service.isMisspelled(
+            "teh",
+            language: "en",
+            layoutID: "com.apple.keylayout.US",
+            bundleID: nil
+        ))
+    }
+
     func testRejectedConversionsAreScopedToApplication() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let learningURL = tempDirectory.appendingPathComponent("learning.json")
@@ -1369,6 +1512,16 @@ final class LayoutPilotCoreTests: XCTestCase {
             targetLayoutID: "com.apple.keylayout.US",
             bundleID: "com.example.Editor"
         ))
+        XCTAssertEqual(
+            learningStore.suppressionReason(
+                mode: "bilingual",
+                original: "инпут",
+                replacement: "bygen",
+                sourceLayoutID: "com.apple.keylayout.RussianWin",
+                targetLayoutID: "com.apple.keylayout.US"
+            ),
+            "user_rejected_conversion"
+        )
 
         learningStore.recordRejectedConversion(
             mode: "bilingual",

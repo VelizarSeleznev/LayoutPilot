@@ -86,6 +86,7 @@ final class LayoutPilotAppState {
         SmartInputService.shared.smartBilingualEnabled = configuration.isSmartBilingualActive
         SmartInputService.shared.smartBilingualAllowedBundleIDs = Set(configuration.smartBilingualAllowedBundleIDs)
         SmartInputService.shared.smartBilingualUndoDelay = configuration.smartBilingualUndoDelay
+        SmartInputService.shared.smartInputLearningScope = configuration.smartInputLearningScope
         SmartInputService.shared.smartBilingualApplyToAll = configuration.smartBilingualApplyToAll
         SmartInputService.shared.danishApplyToAll = configuration.smartDanishApplyToAll
         SmartInputService.shared.textSnippetsEnabled = configuration.areTextSnippetsActive

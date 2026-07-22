@@ -76,6 +76,19 @@ struct SettingsView: View {
                             get: { appState.store.configuration.spellingAutocorrectEnabled },
                             set: { appState.store.setSpellingAutocorrectEnabled($0) }
                         ))
+
+                        Picker("Learning scope", selection: Binding(
+                            get: { appState.store.configuration.smartInputLearningScope },
+                            set: { appState.store.setSmartInputLearningScope($0) }
+                        )) {
+                            Text("Global").tag(SmartInputLearningScope.global)
+                            Text("Per app").tag(SmartInputLearningScope.perApplication)
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text("Global learns from your corrections across every app. Per app keeps separate behavior for each application.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 

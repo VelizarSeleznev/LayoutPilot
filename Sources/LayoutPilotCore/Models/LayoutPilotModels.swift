@@ -285,6 +285,11 @@ public enum TextSnippetPolicy {
     }
 }
 
+public enum SmartInputLearningScope: String, Codable, CaseIterable, Hashable, Sendable {
+    case global
+    case perApplication
+}
+
 public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public static let defaultSmartBilingualUndoDelay = 3.0
 
@@ -297,6 +302,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var smartBilingualEnabled: Bool
     public var smartBilingualAllowedBundleIDs: [String]
     public var smartBilingualUndoDelay: Double
+    public var smartInputLearningScope: SmartInputLearningScope
     /// When enabled, apps without an explicit rule fall back to `defaultAutoSwitchTarget`.
     public var defaultAutoSwitchEnabled: Bool
     public var defaultAutoSwitchTarget: ApplicationLayoutRuleTarget
@@ -331,6 +337,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         smartBilingualEnabled: Bool = true,
         smartBilingualAllowedBundleIDs: [String] = [],
         smartBilingualUndoDelay: Double = Self.defaultSmartBilingualUndoDelay,
+        smartInputLearningScope: SmartInputLearningScope = .global,
         defaultAutoSwitchEnabled: Bool = false,
         defaultAutoSwitchTarget: ApplicationLayoutRuleTarget = .lastUsed,
         defaultAutoSwitchProfileID: UUID? = nil,
@@ -361,6 +368,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartBilingualEnabled = smartBilingualEnabled
         self.smartBilingualAllowedBundleIDs = smartBilingualAllowedBundleIDs
         self.smartBilingualUndoDelay = smartBilingualUndoDelay
+        self.smartInputLearningScope = smartInputLearningScope
         self.defaultAutoSwitchEnabled = defaultAutoSwitchEnabled
         self.defaultAutoSwitchTarget = defaultAutoSwitchTarget
         self.defaultAutoSwitchProfileID = defaultAutoSwitchProfileID
@@ -393,6 +401,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case smartBilingualEnabled
         case smartBilingualAllowedBundleIDs
         case smartBilingualUndoDelay
+        case smartInputLearningScope
         case defaultAutoSwitchEnabled
         case defaultAutoSwitchTarget
         case defaultAutoSwitchProfileID
@@ -429,6 +438,8 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.smartBilingualEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualEnabled) ?? true
         self.smartBilingualAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartBilingualAllowedBundleIDs) ?? self.smartDanishInputAllowedBundleIDs
         self.smartBilingualUndoDelay = try container.decodeIfPresent(Double.self, forKey: .smartBilingualUndoDelay) ?? Self.defaultSmartBilingualUndoDelay
+        let learningScopeValue = try container.decodeIfPresent(String.self, forKey: .smartInputLearningScope)
+        self.smartInputLearningScope = learningScopeValue.flatMap(SmartInputLearningScope.init(rawValue:)) ?? .global
         self.defaultAutoSwitchEnabled = try container.decodeIfPresent(Bool.self, forKey: .defaultAutoSwitchEnabled) ?? false
         self.defaultAutoSwitchTarget = try container.decodeIfPresent(ApplicationLayoutRuleTarget.self, forKey: .defaultAutoSwitchTarget) ?? .lastUsed
         self.defaultAutoSwitchProfileID = try container.decodeIfPresent(UUID.self, forKey: .defaultAutoSwitchProfileID)

@@ -339,6 +339,7 @@ public final class SmartInputService: @unchecked Sendable {
 
     private var _smartBilingualEnabled = true
     private var _smartBilingualAllowedBundleIDs = Set<String>()
+    private var _smartInputLearningScope = SmartInputLearningScope.global
 
     public var smartBilingualEnabled: Bool {
         get {
@@ -359,6 +360,17 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _smartBilingualAllowedBundleIDs = newValue
+        }
+    }
+
+    public var smartInputLearningScope: SmartInputLearningScope {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _smartInputLearningScope
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _smartInputLearningScope = newValue
         }
     }
 
@@ -974,7 +986,12 @@ public final class SmartInputService: @unchecked Sendable {
                spellingAutocorrectEnabled,
                !wordToCheck.isEmpty,
                let lang = detectedLanguage,
-               isMisspelled(wordToCheck, language: lang, layoutID: sourceID) {
+               isMisspelled(
+                   wordToCheck,
+                   language: lang,
+                   layoutID: sourceID,
+                   bundleID: activeBundleID
+               ) {
                 
                 let guesses = suggestionsForWord(wordToCheck, language: lang)
                 if !guesses.isEmpty {
@@ -1783,7 +1800,7 @@ public final class SmartInputService: @unchecked Sendable {
             replacement: candidate.replacement,
             sourceLayoutID: sourceLayoutID,
             targetLayoutID: candidate.targetLayoutID,
-            bundleID: bundleID
+            bundleID: learningLookupBundleID(for: bundleID)
         ) {
             var shouldBypass = isForcedBilingualConversion(
                 original: token,
@@ -2028,7 +2045,7 @@ public final class SmartInputService: @unchecked Sendable {
             replacement: replacement,
             sourceLayoutID: candidate.sourceLayoutID,
             targetLayoutID: candidate.targetLayoutID,
-            bundleID: candidate.bundleID
+            bundleID: learningLookupBundleID(for: candidate.bundleID)
         ) == nil else {
             return nil
         }
@@ -2111,8 +2128,17 @@ public final class SmartInputService: @unchecked Sendable {
             replacement: candidate.replacement,
             sourceLayoutID: candidate.sourceLayoutID,
             targetLayoutID: candidate.targetLayoutID,
-            bundleID: candidate.bundleID
+            bundleID: learningLookupBundleID(for: candidate.bundleID)
         ) == "user_rejected_conversion"
+    }
+
+    private func learningLookupBundleID(for bundleID: String?) -> String? {
+        guard smartInputLearningScope == .perApplication,
+              let bundleID,
+              !bundleID.isEmpty else {
+            return nil
+        }
+        return bundleID
     }
 
     private func isPlausibleContextualShortWord(_ word: String, language: WordLanguage) -> Bool {
@@ -2360,7 +2386,12 @@ public final class SmartInputService: @unchecked Sendable {
 
     // MARK: - Spelling Autocorrect helpers
     
-    public func isMisspelled(_ word: String, language: String, layoutID: String?) -> Bool {
+    public func isMisspelled(
+        _ word: String,
+        language: String,
+        layoutID: String?,
+        bundleID: String? = nil
+    ) -> Bool {
         if word.count <= 1 {
             return false
         }
@@ -2368,7 +2399,11 @@ public final class SmartInputService: @unchecked Sendable {
         let normalized = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
         // 1. Check if word is accepted in our learning store
-        if learningStore.isWordAccepted(normalized, layoutID: layoutID) {
+        if learningStore.isWordAccepted(
+            normalized,
+            layoutID: layoutID,
+            bundleID: learningLookupBundleID(for: bundleID)
+        ) {
             return false
         }
         

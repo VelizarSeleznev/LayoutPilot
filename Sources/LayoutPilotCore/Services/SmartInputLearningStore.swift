@@ -255,15 +255,29 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         }
     }
 
-    public func isWordAccepted(_ word: String, layoutID: String? = nil) -> Bool {
+    public func isWordAccepted(
+        _ word: String,
+        layoutID: String? = nil,
+        bundleID: String? = nil
+    ) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         let normalized = Self.normalizedWord(word)
         if let layoutID {
             let key = Self.wordKey(word: normalized, layoutID: layoutID)
-            return (state.acceptedWords[key]?.count ?? 0) >= acceptedWordPromotionCount
+            guard let entry = state.acceptedWords[key] else { return false }
+            let count = bundleID.flatMap {
+                entry.countsByBundleID?[$0]
+            } ?? (bundleID == nil ? entry.count : 0)
+            return count >= acceptedWordPromotionCount
         }
-        return state.acceptedWords.values.contains { $0.word == normalized && $0.count >= acceptedWordPromotionCount }
+        return state.acceptedWords.values.contains { entry in
+            guard entry.word == normalized else { return false }
+            let count = bundleID.flatMap {
+                entry.countsByBundleID?[$0]
+            } ?? (bundleID == nil ? entry.count : 0)
+            return count >= acceptedWordPromotionCount
+        }
     }
 
     public func bootstrapSpellingVocabularyFromLogs(

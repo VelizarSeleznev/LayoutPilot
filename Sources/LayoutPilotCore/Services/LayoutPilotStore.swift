@@ -277,6 +277,12 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setSmartInputLearningScope(_ value: SmartInputLearningScope) {
+        var updated = configuration
+        updated.smartInputLearningScope = value
+        configuration = updated
+    }
+
     public func setDefaultAutoSwitchEnabled(_ value: Bool) {
         var updated = configuration
         updated.defaultAutoSwitchEnabled = value
