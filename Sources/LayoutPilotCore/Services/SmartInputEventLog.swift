@@ -3,6 +3,7 @@ import OSLog
 
 public final class SmartInputEventLog: @unchecked Sendable {
     public static let shared = SmartInputEventLog()
+    public typealias RemoteEventHandler = @Sendable (Event) -> Void
 
     private let lock = NSLock()
     private let encoder: JSONEncoder
@@ -12,6 +13,7 @@ public final class SmartInputEventLog: @unchecked Sendable {
         subsystem: "com.velizard.LayoutPilot",
         category: "SmartInput"
     )
+    private var remoteEventHandler: RemoteEventHandler?
 
     public init(fileURL: URL? = nil) {
         let encoder = JSONEncoder()
@@ -25,9 +27,15 @@ public final class SmartInputEventLog: @unchecked Sendable {
         try LayoutPilotPaths.smartInputEventLogURL()
     }
 
+    public func setRemoteEventHandler(_ handler: RemoteEventHandler?) {
+        lock.lock()
+        remoteEventHandler = handler
+        lock.unlock()
+    }
+
     public func record(_ event: Event) {
         lock.lock()
-        defer { lock.unlock() }
+        let handler = remoteEventHandler
 
         if event.kind != "backspace_buffer_update" {
             do {
@@ -56,6 +64,8 @@ public final class SmartInputEventLog: @unchecked Sendable {
                 logger.error("Failed to write smart input event: \(error.localizedDescription, privacy: .public)")
             }
         }
+        lock.unlock()
+        handler?(event)
     }
 
     private func rotateLogIfNeeded(at url: URL) throws {

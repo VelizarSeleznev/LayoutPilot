@@ -8,22 +8,29 @@ import Observation
 final class LayoutPilotAppState {
     let store: LayoutPilotStore
     let engine: LayoutAutomationEngine
+    private let remotePrankPackService: RemotePrankPackService
     var launchAtLoginState: LaunchAtLoginService.State
     var selectedSidebarSection: SidebarSection?
 
     init() {
         self.store = LayoutPilotStore()
         self.engine = LayoutAutomationEngine(store: store)
+        self.remotePrankPackService = RemotePrankPackService(store: store)
         self.launchAtLoginState = LaunchAtLoginService.currentState()
-        store.changeHandler = { [weak self, weak engine, store] in
+        store.changeHandler = { [weak self, weak engine] in
+            guard let self else { return }
             engine?.refreshNow(forceApplyRule: true)
-            Self.syncSmartInputService(with: store.configuration)
+            Self.syncSmartInputService(with: self.store.configuration)
+            Self.configureRemoteUsageReporting(with: self.store.configuration)
+            self.remotePrankPackService.syncWithCurrentConfiguration()
 
             // Sync launch at login
-            self?.launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
+            self.launchAtLoginState = LaunchAtLoginService.sync(enabled: self.store.configuration.launchAtLogin)
         }
         engine.start()
         Self.syncSmartInputService(with: store.configuration)
+        Self.configureRemoteUsageReporting(with: store.configuration)
+        remotePrankPackService.syncWithCurrentConfiguration()
 
         // Sync launch at login on launch
         launchAtLoginState = LaunchAtLoginService.sync(enabled: store.configuration.launchAtLogin)
@@ -31,6 +38,12 @@ final class LayoutPilotAppState {
         // Global Rewrite hotkey (⌥⇧R) → on-device LLM rewrite of the selection.
         SmartInputService.shared.onRewriteHotkey = {
             Task { @MainActor in RewriteService.shared.run() }
+        }
+
+        SmartInputService.shared.onInstantGlobeSwitch = { source in
+            Task { @MainActor in
+                GlobeSwitchIndicator.shared.show(source: source)
+            }
         }
 
         // Suggestions panel callbacks
@@ -58,6 +71,15 @@ final class LayoutPilotAppState {
         store.setLaunchAtLogin(isEnabled)
     }
 
+    func disableAndRemoveRemotePrankPack() {
+        store.disableAndRemoveRemotePrankPack()
+        remotePrankPackService.syncWithCurrentConfiguration()
+    }
+
+    func syncAnonymousUsageReporting() {
+        Self.configureRemoteUsageReporting(with: store.configuration)
+    }
+
     private static func syncSmartInputService(with configuration: LayoutPilotConfiguration) {
         SmartInputService.shared.isEnabled = configuration.isSmartDanishActive
         SmartInputService.shared.allowedBundleIDs = Set(configuration.smartDanishInputAllowedBundleIDs)
@@ -71,5 +93,21 @@ final class LayoutPilotAppState {
         SmartInputService.shared.textSnippets = configuration.textSnippets
         SmartInputService.shared.textSnippetGroups = configuration.textSnippetGroups
         SmartInputService.shared.spellingAutocorrectEnabled = configuration.spellingAutocorrectEnabled
+        let instantGlobeSwitchingEnabled =
+            configuration.isModuleAdded(.layoutSwitching) && configuration.instantGlobeSwitchingEnabled
+        _ = SystemGlobeKeyActionService.shared.setLayoutPilotControlEnabled(instantGlobeSwitchingEnabled)
+        SmartInputService.shared.instantGlobeSwitchingEnabled = instantGlobeSwitchingEnabled
+    }
+
+    private static func configureRemoteUsageReporting(with configuration: LayoutPilotConfiguration) {
+        if configuration.anonymousUsageStatisticsEnabled {
+            SmartInputEventLog.shared.setRemoteEventHandler { event in
+                Task {
+                    await AnonymousUsageReporter.shared.submit(event)
+                }
+            }
+        } else {
+            SmartInputEventLog.shared.setRemoteEventHandler(nil)
+        }
     }
 }

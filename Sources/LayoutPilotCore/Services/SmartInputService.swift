@@ -11,11 +11,17 @@ public final class SmartInputService: @unchecked Sendable {
     /// Set once at launch; the handler hops to the main actor itself.
     public var onRewriteHotkey: (@Sendable () -> Void)?
 
+    /// Invoked after an instant Globe press successfully selects a new input source.
+    /// The app layer is responsible for hopping to the main actor before showing UI.
+    public var onInstantGlobeSwitch: (@Sendable (InputSourceInfo) -> Void)?
+
     private let magicEventTag: Int64 = 0x44414E495348 // "DANISH"
+    private let globeKeyCode: Int64 = 63
     private let logger = Logger(
         subsystem: "com.velizard.LayoutPilot",
         category: "SmartInputService"
     )
+    private let instantInputSourceCycler = InstantInputSourceCycler()
     private let usInputSources = Set(["com.apple.keylayout.US", "com.apple.keylayout.ABC"])
     private let danishLanguage = "da"
     
@@ -142,6 +148,8 @@ public final class SmartInputService: @unchecked Sendable {
     
     private let lock = NSLock()
     private var _isEnabled = true
+    private var _instantGlobeSwitchingEnabled = false
+    private var globeKeyState = GlobeKeyStateMachine()
     
     public var isEnabled: Bool {
         get {
@@ -151,6 +159,18 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _isEnabled = newValue
+        }
+    }
+
+    public var instantGlobeSwitchingEnabled: Bool {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _instantGlobeSwitchingEnabled
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _instantGlobeSwitchingEnabled = newValue
+            globeKeyState.reset()
         }
     }
 
@@ -518,8 +538,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func performLayoutCaching() {
-        let client = SystemInputSourceClient()
-        let sources = client.availableInputSources()
+        let sources = instantInputSourceCycler.refreshSources()
         
         let english = sources.first { source in
             let id = source.sourceID.lowercased()
@@ -559,11 +578,13 @@ public final class SmartInputService: @unchecked Sendable {
             
             let selfOpaque = Unmanaged.passUnretained(self).toOpaque()
             
+            let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+                | CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             guard let tap = CGEvent.tapCreate(
                 tap: .cgSessionEventTap,
                 place: .headInsertEventTap,
                 options: .defaultTap,
-                eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+                eventsOfInterest: eventMask,
                 callback: callback,
                 userInfo: selfOpaque
             ) else {
@@ -606,8 +627,13 @@ public final class SmartInputService: @unchecked Sendable {
     
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            resetGlobeKeyState()
             recoverEventTapAfterDisable(reason: type == .tapDisabledByTimeout ? "timeout" : "user_input")
             return Unmanaged.passUnretained(event)
+        }
+
+        if type == .flagsChanged {
+            return handleGlobeFlagsChanged(event)
         }
         
         guard type == .keyDown else {
@@ -1160,15 +1186,54 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         guard CFMachPortIsValid(tap) else {
+            resetGlobeKeyState()
             logger.error("Smart input event tap became invalid; recreating")
             CFRunLoopStop(runLoop)
             return
         }
 
         if !CGEvent.tapIsEnabled(tap: tap) {
+            resetGlobeKeyState()
             logger.warning("Smart input event tap was disabled without callback; re-enabling")
             CGEvent.tapEnable(tap: tap, enable: true)
         }
+    }
+
+    private func handleGlobeFlagsChanged(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let isGlobeEvent = keyCode == globeKeyCode
+        let isDown = event.flags.contains(.maskSecondaryFn)
+        let action: GlobeKeyAction
+
+        lock.lock()
+        action = globeKeyState.handle(
+            isGlobeEvent: isGlobeEvent,
+            isDown: isDown,
+            isEnabled: _instantGlobeSwitchingEnabled
+        )
+        lock.unlock()
+
+        switch action {
+        case .passThrough:
+            return Unmanaged.passUnretained(event)
+        case .consume:
+            return nil
+        case .consumeAndCycle:
+            do {
+                if let selectedSource = try instantInputSourceCycler.cycleToNextSource() {
+                    onInstantGlobeSwitch?(selectedSource)
+                }
+            } catch {
+                logger.error("Instant Globe input-source switch failed: \(error.localizedDescription, privacy: .public)")
+            }
+            return nil
+        }
+    }
+
+    private func resetGlobeKeyState() {
+        lock.lock()
+        globeKeyState.reset()
+        lock.unlock()
     }
 
     static func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {

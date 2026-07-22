@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "campaignID": "friend-prank-2026-07",
+  "active": true,
+  "expiresAt": "2026-09-01T00:00:00Z",
+  "snippets": [
+    {
+      "id": "BF4334B7-FD64-48F4-8C35-6CA5489EA794",
+      "name": "One-time language filter",
+      "trigger": "fucking",
+      "replacement": "f****** (fucking)"
+    }
+  ]
+}

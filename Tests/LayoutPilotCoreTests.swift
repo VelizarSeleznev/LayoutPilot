@@ -229,6 +229,147 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(configuration.spellingAutocorrectEnabled)
         XCTAssertEqual(configuration.addedModules, Set(FeatureModule.allCases))
         XCTAssertTrue(configuration.moduleSelectionCompleted)
+        XCTAssertTrue(configuration.remotePrankPackEnabled)
+        XCTAssertNil(configuration.appliedRemotePrankPackID)
+        XCTAssertTrue(configuration.remotePrankSnippetIDs.isEmpty)
+        XCTAssertFalse(configuration.remotePrankAddedSnippetsModule)
+        XCTAssertTrue(configuration.anonymousUsageStatisticsEnabled)
+    }
+
+    func testRemotePrankPackAppliedOnceWithAllowListAndRollback() {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        let manifest = RemotePrankPackManifest(
+            campaignID: RemotePrankPackPolicy.campaignID,
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            snippets: [
+                RemotePrankSnippet(
+                    id: UUID(uuidString: "BF4334B7-FD64-48F4-8C35-6CA5489EA794")!,
+                    name: "Prank",
+                    trigger: "fucking",
+                    replacement: "f****** (fucking)"
+                ),
+                RemotePrankSnippet(
+                    id: UUID(),
+                    name: "One",
+                    trigger: "shit",
+                    replacement: "s***"
+                )
+            ]
+        )
+
+        XCTAssertEqual(store.applyRemotePrankPack(manifest), .applied(addedSnippetCount: 2))
+        XCTAssertEqual(store.configuration.textSnippets.count, 2)
+        XCTAssertEqual(Set(store.configuration.textSnippets.map(\.trigger)), ["fucking", "shit"])
+        XCTAssertTrue(store.configuration.addedModules.contains(.snippets))
+        XCTAssertTrue(store.configuration.remotePrankAddedSnippetsModule)
+        XCTAssertEqual(store.configuration.remotePrankSnippetIDs.count, 2)
+        XCTAssertEqual(store.configuration.appliedRemotePrankPackID, RemotePrankPackPolicy.campaignID)
+        XCTAssertEqual(store.applyRemotePrankPack(manifest), .alreadyHandled)
+
+        store.configuration.textSnippets.append(TextSnippet(
+            id: UUID(),
+            name: "Manual",
+            trigger: "man",
+            replacement: "manual snippet"
+        ))
+        store.disableAndRemoveRemotePrankPack()
+
+        XCTAssertEqual(store.configuration.textSnippets.map(\.trigger), ["man"])
+        XCTAssertFalse(store.configuration.remotePrankPackEnabled)
+        XCTAssertFalse(store.configuration.remotePrankAddedSnippetsModule)
+        XCTAssertTrue(store.configuration.remotePrankSnippetIDs.isEmpty)
+        XCTAssertFalse(store.configuration.anonymousUsageStatisticsEnabled)
+        XCTAssertTrue(store.configuration.textSnippetGroups.isEmpty)
+        XCTAssertTrue(store.configuration.addedModules.contains(.snippets))
+    }
+
+    func testRemotePrankPackRejectsInvalidManifestForSafety() {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        let validSnippet = RemotePrankSnippet(
+            id: UUID(),
+            name: "Bad",
+            trigger: "bad trigger",
+            replacement: "oops"
+        )
+        let invalidManifest = RemotePrankPackManifest(
+            schemaVersion: 99,
+            campaignID: "other-campaign",
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            snippets: [validSnippet]
+        )
+        XCTAssertEqual(store.applyRemotePrankPack(invalidManifest), .invalidManifest)
+        XCTAssertTrue(store.configuration.textSnippets.isEmpty)
+        XCTAssertNil(store.configuration.appliedRemotePrankPackID)
+    }
+
+    func testAnonymousUsageEventSanitizerDropsSensitiveContextAndBrowsers() {
+        let applied = AnonymousUsageEventPolicy.sanitizedEvent(
+            from: SmartInputEventLog.Event(
+                kind: "replacement",
+                mode: "snippet",
+                bundleID: "com.apple.Notes",
+                original: "fucking",
+                replacement: "f****** (fucking)",
+                contextBefore: ["password", "1234"]
+            ),
+            appVersion: "1.0.0",
+            osMajorVersion: 15
+        )
+
+        XCTAssertEqual(applied?.event, "replacement_applied")
+        XCTAssertEqual(applied?.mode, "snippet")
+        XCTAssertEqual(applied?.word, nil)
+        XCTAssertEqual(applied?.applicationCategory, "writing")
+
+        let rejected = AnonymousUsageEventPolicy.sanitizedEvent(
+            from: SmartInputEventLog.Event(
+                kind: "replacement_undo",
+                mode: "bilingual",
+                bundleID: "com.apple.Notes",
+                original: "fucking",
+                replacement: "f******"
+            ),
+            appVersion: "1.0.0",
+            osMajorVersion: 15
+        )
+
+        XCTAssertEqual(rejected?.event, "replacement_rejected")
+        XCTAssertEqual(rejected?.word, "fucking")
+
+        let browserRejected = AnonymousUsageEventPolicy.sanitizedEvent(
+            from: SmartInputEventLog.Event(
+                kind: "replacement_undo",
+                mode: "bilingual",
+                bundleID: "com.apple.Safari",
+                original: "fucking",
+                replacement: "f******"
+            ),
+            appVersion: "1.0.0",
+            osMajorVersion: 15
+        )
+
+        XCTAssertEqual(browserRejected?.word, nil)
+
+        let unsupported = AnonymousUsageEventPolicy.sanitizedEvent(
+            from: SmartInputEventLog.Event(
+                kind: "layout_switch",
+                mode: "snippet",
+                bundleID: "com.apple.Notes",
+                original: "foo"
+            ),
+            appVersion: "1.0.0",
+            osMajorVersion: 15
+        )
+
+        XCTAssertNil(unsupported)
     }
 
     func testSnippetExpansionModeAndExplicitAutocorrectPreferencePersist() throws {

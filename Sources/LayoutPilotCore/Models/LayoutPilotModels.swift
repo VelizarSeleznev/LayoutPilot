@@ -291,6 +291,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var automationEnabled: Bool
     public var launchAtLogin: Bool
     public var showMenuBarItem: Bool
+    public var instantGlobeSwitchingEnabled: Bool
     public var smartDanishInputEnabled: Bool
     public var smartDanishInputAllowedBundleIDs: [String]
     public var smartBilingualEnabled: Bool
@@ -314,11 +315,17 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public var rules: [ApplicationLayoutRule]
     public var websiteRules: [WebsiteLayoutRule]
     public var spellingAutocorrectEnabled: Bool
+    public var remotePrankPackEnabled: Bool
+    public var appliedRemotePrankPackID: String?
+    public var remotePrankSnippetIDs: [UUID]
+    public var remotePrankAddedSnippetsModule: Bool
+    public var anonymousUsageStatisticsEnabled: Bool
 
     public init(
         automationEnabled: Bool = true,
         launchAtLogin: Bool = false,
         showMenuBarItem: Bool = true,
+        instantGlobeSwitchingEnabled: Bool = false,
         smartDanishInputEnabled: Bool = true,
         smartDanishInputAllowedBundleIDs: [String] = [],
         smartBilingualEnabled: Bool = true,
@@ -338,11 +345,17 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         profiles: [InputLayoutProfile],
         rules: [ApplicationLayoutRule],
         websiteRules: [WebsiteLayoutRule] = [],
-        spellingAutocorrectEnabled: Bool = false
+        spellingAutocorrectEnabled: Bool = false,
+        remotePrankPackEnabled: Bool = true,
+        appliedRemotePrankPackID: String? = nil,
+        remotePrankSnippetIDs: [UUID] = [],
+        remotePrankAddedSnippetsModule: Bool = false,
+        anonymousUsageStatisticsEnabled: Bool = true
     ) {
         self.automationEnabled = automationEnabled
         self.launchAtLogin = launchAtLogin
         self.showMenuBarItem = showMenuBarItem
+        self.instantGlobeSwitchingEnabled = instantGlobeSwitchingEnabled
         self.smartDanishInputEnabled = smartDanishInputEnabled
         self.smartDanishInputAllowedBundleIDs = smartDanishInputAllowedBundleIDs
         self.smartBilingualEnabled = smartBilingualEnabled
@@ -363,12 +376,18 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.rules = rules
         self.websiteRules = websiteRules
         self.spellingAutocorrectEnabled = spellingAutocorrectEnabled
+        self.remotePrankPackEnabled = remotePrankPackEnabled
+        self.appliedRemotePrankPackID = appliedRemotePrankPackID
+        self.remotePrankSnippetIDs = remotePrankSnippetIDs
+        self.remotePrankAddedSnippetsModule = remotePrankAddedSnippetsModule
+        self.anonymousUsageStatisticsEnabled = anonymousUsageStatisticsEnabled
     }
 
     enum CodingKeys: String, CodingKey {
         case automationEnabled
         case launchAtLogin
         case showMenuBarItem
+        case instantGlobeSwitchingEnabled
         case smartDanishInputEnabled
         case smartDanishInputAllowedBundleIDs
         case smartBilingualEnabled
@@ -389,6 +408,11 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case rules
         case websiteRules
         case spellingAutocorrectEnabled
+        case remotePrankPackEnabled
+        case appliedRemotePrankPackID
+        case remotePrankSnippetIDs
+        case remotePrankAddedSnippetsModule
+        case anonymousUsageStatisticsEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -396,6 +420,10 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.automationEnabled = try container.decodeIfPresent(Bool.self, forKey: .automationEnabled) ?? true
         self.launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         self.showMenuBarItem = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarItem) ?? true
+        self.instantGlobeSwitchingEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .instantGlobeSwitchingEnabled
+        ) ?? false
         self.smartDanishInputEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartDanishInputEnabled) ?? true
         self.smartDanishInputAllowedBundleIDs = try container.decodeIfPresent([String].self, forKey: .smartDanishInputAllowedBundleIDs) ?? []
         self.smartBilingualEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartBilingualEnabled) ?? true
@@ -420,6 +448,11 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.rules = try container.decodeIfPresent([ApplicationLayoutRule].self, forKey: .rules) ?? []
         self.websiteRules = try container.decodeIfPresent([WebsiteLayoutRule].self, forKey: .websiteRules) ?? []
         self.spellingAutocorrectEnabled = try container.decodeIfPresent(Bool.self, forKey: .spellingAutocorrectEnabled) ?? false
+        self.remotePrankPackEnabled = try container.decodeIfPresent(Bool.self, forKey: .remotePrankPackEnabled) ?? true
+        self.appliedRemotePrankPackID = try container.decodeIfPresent(String.self, forKey: .appliedRemotePrankPackID)
+        self.remotePrankSnippetIDs = try container.decodeIfPresent([UUID].self, forKey: .remotePrankSnippetIDs) ?? []
+        self.remotePrankAddedSnippetsModule = try container.decodeIfPresent(Bool.self, forKey: .remotePrankAddedSnippetsModule) ?? false
+        self.anonymousUsageStatisticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .anonymousUsageStatisticsEnabled) ?? true
     }
 
     public static func `default`() -> LayoutPilotConfiguration {

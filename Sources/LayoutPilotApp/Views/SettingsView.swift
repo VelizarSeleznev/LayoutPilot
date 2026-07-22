@@ -37,6 +37,18 @@ struct SettingsView: View {
                             set: { appState.store.setDefaultAutoSwitchEnabled($0) }
                         ))
 
+                        Toggle("Instant Globe switching", isOn: Binding(
+                            get: { appState.store.configuration.instantGlobeSwitchingEnabled },
+                            set: { appState.store.setInstantGlobeSwitchingEnabled($0) }
+                        ))
+
+                        if appState.store.configuration.instantGlobeSwitchingEnabled {
+                            Text("Globe becomes a dedicated layout key. LayoutPilot switches on press and sets the macOS Globe action to Do Nothing, preventing a second system switch or voice input.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 16)
+                        }
+
                         if appState.store.configuration.defaultAutoSwitchEnabled {
                             Picker("Default switches to", selection: Binding(
                                 get: { defaultAutoSwitchSelection },
@@ -91,6 +103,53 @@ struct SettingsView: View {
                                 .textSelection(.enabled)
                         }
                     }
+                }
+
+                Section("Remote Experiment") {
+                    if appState.store.configuration.remotePrankPackEnabled {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Remote prank pack is enabled on this install.")
+                                .font(.headline)
+                            if appState.store.configuration.appliedRemotePrankPackID != nil {
+                                Text("A remote prank pack has already been handled for this install.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("If the remote manifest is available, it will be applied once and cannot be changed.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Button("Disable & Remove Remote Pack") {
+                                appState.disableAndRemoveRemotePrankPack()
+                                appState.syncAnonymousUsageReporting()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .foregroundStyle(.red)
+                            .tint(.red)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Remote prank pack has been disabled for this install.")
+                                .font(.headline)
+                            if let campaignID = appState.store.configuration.appliedRemotePrankPackID,
+                               !campaignID.isEmpty {
+                                Text("A previous pack was handled and cannot be re-applied.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    Toggle("Send anonymous usage statistics", isOn: Binding(
+                        get: { appState.store.configuration.anonymousUsageStatisticsEnabled },
+                        set: { appState.store.setAnonymousUsageStatisticsEnabled($0) }
+                    ))
+
+                    Text("No exact replacement text, raw password, device identifier, or bundle IDs are sent. Rejected words are sanitized and sent only for non-browser apps.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

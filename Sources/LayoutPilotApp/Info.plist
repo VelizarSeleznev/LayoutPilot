@@ -24,5 +24,13 @@
 	<string>LayoutPilot needs Automation permission to retrieve the active tab URL from your browser to apply website-specific layout rules.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://velizarseleznev.github.io/LayoutPilot/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>kqP2g56I7yz/ruSxLBTKSFAKRhXefII0cwo9u1agIU8=</string>
 </dict>
 </plist>

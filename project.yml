@@ -54,10 +54,6 @@ targets:
         CODE_SIGNING_REQUIRED: YES
         VALIDATE_PRODUCT: NO
         SWIFTUI_PREVIEW_DEVICE: "Apple Mac"
-        SUFeedURL: "https://velizarseleznev.github.io/LayoutPilot/appcast.xml"
-        SUPublicEDKey: "kqP2g56I7yz/ruSxLBTKSFAKRhXefII0cwo9u1agIU8="
-        SUEnableAutomaticChecks: true
-        SUAutomaticallyUpdate: true
     info:
       path: Sources/LayoutPilotApp/Info.plist
       properties:
@@ -68,6 +64,10 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
         NSAppleEventsUsageDescription: LayoutPilot needs Automation permission to retrieve the active tab URL from your browser to apply website-specific layout rules.
+        SUFeedURL: https://velizarseleznev.github.io/LayoutPilot/appcast.xml
+        SUPublicEDKey: kqP2g56I7yz/ruSxLBTKSFAKRhXefII0cwo9u1agIU8=
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: true
   LayoutPilotTests:
     type: bundle.unit-test
     platform: macOS

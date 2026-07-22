@@ -35,6 +35,13 @@ public enum InputSourceClientError: Error, LocalizedError {
 }
 
 public final class SystemInputSourceClient: InputSourceClient {
+    private struct CachedInputSource {
+        let info: InputSourceInfo
+        let source: TISInputSource
+    }
+
+    private var cachedSources: [CachedInputSource] = []
+
     public init() {}
 
     public func currentInputSourceID() -> String? {
@@ -63,23 +70,33 @@ public final class SystemInputSourceClient: InputSourceClient {
         }
 
         let array = unmanaged.takeRetainedValue() as NSArray
-        return array.compactMap { element in
+        let sources: [CachedInputSource] = array.compactMap { element in
             let source = element as! TISInputSource
-            
+
             // Only include actual keyboard input sources (layouts and input methods)
             guard let category = Self.stringProperty(source, key: kTISPropertyInputSourceCategory),
-                  category == (kTISCategoryKeyboardInputSource as String) else {
+                  category == (kTISCategoryKeyboardInputSource as String),
+                  Self.boolProperty(source, key: kTISPropertyInputSourceIsSelectCapable) != false else {
                 return nil
             }
-            
+
             guard let sourceID = Self.stringProperty(source, key: kTISPropertyInputSourceID),
                   let localizedName = Self.stringProperty(source, key: kTISPropertyLocalizedName) else {
                 return nil
             }
             let languages = Self.arrayProperty(source, key: kTISPropertyInputSourceLanguages)
             let languageTag = languages?.first
-            return InputSourceInfo(sourceID: sourceID, localizedName: localizedName, languageTag: languageTag)
+            return CachedInputSource(
+                info: InputSourceInfo(
+                    sourceID: sourceID,
+                    localizedName: localizedName,
+                    languageTag: languageTag
+                ),
+                source: source
+            )
         }
+        cachedSources = sources
+        return sources.map(\.info)
     }
 
     public func activateInputSource(withID inputSourceID: String) throws {
@@ -93,30 +110,20 @@ public final class SystemInputSourceClient: InputSourceClient {
             return
         }
 
-        guard let match = availableInputSources().first(where: { $0.sourceID == inputSourceID }) else {
+        var match = cachedSources.first { $0.info.sourceID == inputSourceID }
+        if match == nil {
+            _ = availableInputSources()
+            match = cachedSources.first { $0.info.sourceID == inputSourceID }
+        }
+
+        guard let match else {
             throw InputSourceClientError.sourceNotFound(inputSourceID)
         }
 
-        guard let unmanaged = TISCreateInputSourceList(nil, false) else {
-            throw InputSourceClientError.sourceNotFound(match.sourceID)
+        let status = TISSelectInputSource(match.source)
+        guard status == noErr else {
+            throw InputSourceClientError.activationFailed(inputSourceID, status)
         }
-
-        let array = unmanaged.takeRetainedValue() as NSArray
-        for element in array {
-            let source = element as! TISInputSource
-            guard let sourceID = Self.stringProperty(source, key: kTISPropertyInputSourceID),
-                  sourceID == inputSourceID else {
-                continue
-            }
-
-            let status = TISSelectInputSource(source)
-            guard status == noErr else {
-                throw InputSourceClientError.activationFailed(inputSourceID, status)
-            }
-            return
-        }
-
-        throw InputSourceClientError.sourceNotFound(inputSourceID)
     }
 
     private static func stringProperty(_ source: TISInputSource, key: CFString) -> String? {
@@ -132,5 +139,13 @@ public final class SystemInputSourceClient: InputSourceClient {
         }
         let array = Unmanaged<CFArray>.fromOpaque(raw).takeUnretainedValue() as NSArray
         return array.compactMap { $0 as? String }
+    }
+
+    private static func boolProperty(_ source: TISInputSource, key: CFString) -> Bool? {
+        guard let raw = TISGetInputSourceProperty(source, key) else {
+            return nil
+        }
+        let value = Unmanaged<CFBoolean>.fromOpaque(raw).takeUnretainedValue()
+        return CFBooleanGetValue(value)
     }
 }

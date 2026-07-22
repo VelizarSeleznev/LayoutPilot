@@ -23,6 +23,13 @@ public enum TextSnippetValidationError: LocalizedError, Equatable {
     }
 }
 
+public enum RemotePrankPackApplyResult: Equatable, Sendable {
+    case disabled
+    case alreadyHandled
+    case invalidManifest
+    case applied(addedSnippetCount: Int)
+}
+
 @MainActor
 @Observable
 public final class LayoutPilotStore {
@@ -194,6 +201,12 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setInstantGlobeSwitchingEnabled(_ value: Bool) {
+        var updated = configuration
+        updated.instantGlobeSwitchingEnabled = value
+        configuration = updated
+    }
+
     public func setSmartDanishInputEnabled(_ value: Bool) {
         var updated = configuration
         updated.smartDanishInputEnabled = value
@@ -303,6 +316,56 @@ public final class LayoutPilotStore {
     public func setTextSnippetExpansionMode(_ mode: TextSnippetExpansionMode) {
         var updated = configuration
         updated.textSnippetExpansionMode = mode
+        configuration = updated
+    }
+
+    @discardableResult
+    public func applyRemotePrankPack(
+        _ manifest: RemotePrankPackManifest,
+        now: Date = Date()
+    ) -> RemotePrankPackApplyResult {
+        guard configuration.remotePrankPackEnabled else { return .disabled }
+        guard configuration.appliedRemotePrankPackID == nil else { return .alreadyHandled }
+        guard let snippets = RemotePrankPackPolicy.validatedSnippets(from: manifest, now: now) else {
+            return .invalidManifest
+        }
+
+        var updated = configuration
+        let existingTriggers = Set(updated.textSnippets.map(\.trigger))
+        let existingIDs = Set(updated.textSnippets.map(\.id))
+        let additions = snippets.filter {
+            !existingTriggers.contains($0.trigger) && !existingIDs.contains($0.id)
+        }
+        updated.textSnippets.append(contentsOf: additions)
+        updated.remotePrankSnippetIDs = additions.map(\.id)
+        updated.appliedRemotePrankPackID = manifest.campaignID
+
+        if !updated.addedModules.contains(.snippets) {
+            updated.addedModules.insert(.snippets)
+            updated.remotePrankAddedSnippetsModule = true
+        }
+
+        configuration = updated
+        return .applied(addedSnippetCount: additions.count)
+    }
+
+    public func disableAndRemoveRemotePrankPack() {
+        var updated = configuration
+        let remoteIDs = Set(updated.remotePrankSnippetIDs)
+        updated.textSnippets.removeAll { remoteIDs.contains($0.id) }
+        if updated.remotePrankAddedSnippetsModule && updated.textSnippets.isEmpty {
+            updated.addedModules.remove(.snippets)
+        }
+        updated.remotePrankPackEnabled = false
+        updated.anonymousUsageStatisticsEnabled = false
+        updated.remotePrankSnippetIDs = []
+        updated.remotePrankAddedSnippetsModule = false
+        configuration = updated
+    }
+
+    public func setAnonymousUsageStatisticsEnabled(_ value: Bool) {
+        var updated = configuration
+        updated.anonymousUsageStatisticsEnabled = value
         configuration = updated
     }
 
