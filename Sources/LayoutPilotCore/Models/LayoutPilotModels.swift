@@ -201,6 +201,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
     public var isCaseSensitive: Bool
     public var preservesTypedCase: Bool
     public var requiresWordBoundary: Bool
+    public var allowsInRestrictedApplications: Bool
     public var groupID: UUID?
     public var applicationScopeOverride: SnippetApplicationScope?
 
@@ -213,6 +214,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         isCaseSensitive: Bool = true,
         preservesTypedCase: Bool = false,
         requiresWordBoundary: Bool = false,
+        allowsInRestrictedApplications: Bool = false,
         groupID: UUID? = nil,
         applicationScopeOverride: SnippetApplicationScope? = nil
     ) {
@@ -224,6 +226,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         self.isCaseSensitive = isCaseSensitive
         self.preservesTypedCase = preservesTypedCase
         self.requiresWordBoundary = requiresWordBoundary
+        self.allowsInRestrictedApplications = allowsInRestrictedApplications
         self.groupID = groupID
         self.applicationScopeOverride = applicationScopeOverride
     }
@@ -237,6 +240,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         case isCaseSensitive
         case preservesTypedCase
         case requiresWordBoundary
+        case allowsInRestrictedApplications
         case groupID
         case applicationScopeOverride
     }
@@ -251,6 +255,10 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         self.isCaseSensitive = try container.decodeIfPresent(Bool.self, forKey: .isCaseSensitive) ?? true
         self.preservesTypedCase = try container.decodeIfPresent(Bool.self, forKey: .preservesTypedCase) ?? false
         self.requiresWordBoundary = try container.decodeIfPresent(Bool.self, forKey: .requiresWordBoundary) ?? false
+        self.allowsInRestrictedApplications = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .allowsInRestrictedApplications
+        ) ?? false
         self.groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         self.applicationScopeOverride = try container.decodeIfPresent(
             SnippetApplicationScope.self,
@@ -294,7 +302,7 @@ public enum TextSnippetPolicy {
         in bundleID: String,
         groups: [TextSnippetGroup]
     ) -> Bool {
-        !securityExcludedBundleIDs.contains(bundleID)
+        (snippet.allowsInRestrictedApplications || !securityExcludedBundleIDs.contains(bundleID))
             && snippet.isEnabled
             && effectiveScope(for: snippet, groups: groups).allows(bundleID: bundleID)
     }

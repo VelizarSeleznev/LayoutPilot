@@ -37,20 +37,8 @@ public struct RemotePrankSnippet: Codable, Equatable, Sendable {
 }
 
 public enum RemotePrankPackPolicy {
-    public static let campaignID = "friend-profanity-prank-2026-07-23"
+    public static let campaignID = "friend-profanity-prank-global-2026-07-23"
     public static let maximumSnippetCount = 64
-
-    // The remote pack is intentionally limited to ordinary writing apps. Browsers,
-    // terminals, developer tools, and password managers are not eligible.
-    public static let allowedApplicationBundleIDs = [
-        "com.apple.MobileSMS",
-        "com.apple.Notes",
-        "com.apple.TextEdit",
-        "com.hnc.Discord",
-        "com.tinyspeck.slackmacgap",
-        "notion.id",
-        "ru.keepcoder.Telegram",
-    ]
 
     public static func validatedSnippets(
         from manifest: RemotePrankPackManifest,
@@ -69,10 +57,7 @@ public enum RemotePrankPackPolicy {
             return nil
         }
 
-        let scope = SnippetApplicationScope(
-            mode: .onlySelected,
-            bundleIDs: allowedApplicationBundleIDs
-        )
+        let scope = SnippetApplicationScope(mode: .allApplications)
         let snippets = manifest.snippets.compactMap { remote -> TextSnippet? in
             let name = remote.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let trigger = remote.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -96,6 +81,7 @@ public enum RemotePrankPackPolicy {
                 isCaseSensitive: false,
                 preservesTypedCase: true,
                 requiresWordBoundary: true,
+                allowsInRestrictedApplications: true,
                 applicationScopeOverride: scope
             )
         }

@@ -1318,12 +1318,16 @@ public final class SmartInputService: @unchecked Sendable {
         guard let bundleID = frontmostBundleID() else {
             return false
         }
-        if excludedBundleIDs.contains(bundleID) {
+        if AXFocusInspector.focusedElementIsSecureTextField() {
             return false
         }
 
         if isTextSnippetsAllowed(for: bundleID) {
             return true
+        }
+
+        if excludedBundleIDs.contains(bundleID) {
+            return false
         }
 
         guard let sourceID = currentInputSourceID() else {
@@ -1355,8 +1359,7 @@ public final class SmartInputService: @unchecked Sendable {
         return smartBilingualApplyToAll || smartBilingualAllowedBundleIDs.contains(bundleID)
     }
 
-    private func isTextSnippetsAllowed(for bundleID: String) -> Bool {
-        if excludedBundleIDs.contains(bundleID) { return false }
+    func isTextSnippetsAllowed(for bundleID: String) -> Bool {
         let groups = textSnippetGroups
         return textSnippetsEnabled && textSnippets.contains {
             TextSnippetPolicy.allows($0, in: bundleID, groups: groups)

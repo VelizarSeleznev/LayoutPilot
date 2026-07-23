@@ -266,7 +266,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertTrue(configuration.anonymousUsageStatisticsEnabled)
     }
 
-    func testRemotePrankPackAppliedOnceWithAllowListAndRollback() {
+    func testRemotePrankPackAppliedOnceWithGlobalScopeAndRollback() {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let fileURL = tempDirectory.appendingPathComponent("configuration.json")
         let store = LayoutPilotStore(fileURL: fileURL)
@@ -302,6 +302,22 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy { !$0.isCaseSensitive })
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.preservesTypedCase))
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.requiresWordBoundary))
+        XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.allowsInRestrictedApplications))
+        XCTAssertTrue(store.configuration.textSnippets.allSatisfy {
+            $0.applicationScopeOverride?.mode == .allApplications
+        })
+        let remoteSnippet = store.configuration.textSnippets[0]
+        for bundleID in [
+            "com.openai.codex",
+            "com.apple.Safari",
+            "com.apple.Terminal",
+            "com.1password.1password"
+        ] {
+            XCTAssertTrue(
+                TextSnippetPolicy.allows(remoteSnippet, in: bundleID, groups: []),
+                bundleID
+            )
+        }
 
         store.configuration.textSnippets.append(TextSnippet(
             id: UUID(),
@@ -339,7 +355,7 @@ final class LayoutPilotCoreTests: XCTestCase {
                 replacement: "be right back"
             )
         ]
-        store.configuration.appliedRemotePrankPackID = "friend-prank-2026-07"
+        store.configuration.appliedRemotePrankPackID = "friend-profanity-prank-2026-07-23"
         store.configuration.remotePrankSnippetIDs = [oldRemoteID]
 
         let newRemoteID = UUID()
@@ -441,6 +457,10 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(snippets.count, 42)
         XCTAssertEqual(snippets.first { $0.trigger == "бля" }?.replacement, "б** (бля)")
         XCTAssertEqual(snippets.first { $0.trigger == "fucking" }?.replacement, "f****** (fucking)")
+        XCTAssertTrue(snippets.allSatisfy(\.allowsInRestrictedApplications))
+        XCTAssertTrue(snippets.allSatisfy {
+            $0.applicationScopeOverride?.mode == .allApplications
+        })
         XCTAssertGreaterThanOrEqual(snippets.filter {
             $0.trigger.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
         }.count, 20)
@@ -589,8 +609,53 @@ final class LayoutPilotCoreTests: XCTestCase {
         let snippet = try JSONDecoder().decode(TextSnippet.self, from: data)
 
         XCTAssertEqual(snippet.name, ";sig")
+        XCTAssertFalse(snippet.allowsInRestrictedApplications)
         XCTAssertNil(snippet.groupID)
         XCTAssertNil(snippet.applicationScopeOverride)
+    }
+
+    func testSecureTextFieldsRemainExcludedFromGlobalSnippetHandling() {
+        XCTAssertTrue(AXFocusInspector.isSecureTextField(
+            role: "AXSecureTextField",
+            subrole: nil
+        ))
+        XCTAssertTrue(AXFocusInspector.isSecureTextField(
+            role: "AXTextField",
+            subrole: "AXSecureTextField"
+        ))
+        XCTAssertFalse(AXFocusInspector.isSecureTextField(
+            role: "AXTextField",
+            subrole: nil
+        ))
+    }
+
+    func testRemoteSnippetHandlingCanEnterSecurityExcludedApplications() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+        let regularSnippet = TextSnippet(
+            name: "Regular",
+            trigger: ";regular",
+            replacement: "Regular"
+        )
+        let remoteSnippet = TextSnippet(
+            name: "Remote",
+            trigger: "fucking",
+            replacement: "f****** (fucking)",
+            isCaseSensitive: false,
+            preservesTypedCase: true,
+            requiresWordBoundary: true,
+            allowsInRestrictedApplications: true,
+            applicationScopeOverride: SnippetApplicationScope(mode: .allApplications)
+        )
+
+        service.textSnippets = [regularSnippet]
+        XCTAssertFalse(service.isTextSnippetsAllowed(for: "com.apple.Terminal"))
+
+        service.textSnippets = [regularSnippet, remoteSnippet]
+        XCTAssertTrue(service.isTextSnippetsAllowed(for: "com.apple.Terminal"))
+        XCTAssertTrue(service.isTextSnippetsAllowed(for: "com.openai.codex"))
     }
 
     func testSnippetScopeInheritanceAndOverride() {

@@ -35,6 +35,30 @@ public struct AXFocusSnapshot: Sendable {
 
 @MainActor
 public enum AXFocusInspector {
+    /// Prevents snippets and layout correction from rewriting password input while
+    /// allowing globally scoped snippets in every non-secure text field.
+    nonisolated public static func focusedElementIsSecureTextField() -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedRef
+        ) == .success,
+        let focusedRef,
+        CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else {
+            return false
+        }
+
+        let element = focusedRef as! AXUIElement
+        return isSecureTextField(
+            role: copyString(element, kAXRoleAttribute),
+            subrole: copyString(element, kAXSubroleAttribute)
+        )
+    }
+
     /// Reads a small slice immediately before the insertion point. This is safe to
     /// call from the event-tap thread and avoids fetching an entire document when
     /// the focused control supports AXStringForRange.
@@ -54,8 +78,10 @@ public enum AXFocusInspector {
         }
 
         let element = focusedRef as! AXUIElement
-        if copyString(element, kAXRoleAttribute) == "AXSecureTextField" ||
-            copyString(element, kAXSubroleAttribute) == "AXSecureTextField" {
+        if isSecureTextField(
+            role: copyString(element, kAXRoleAttribute),
+            subrole: copyString(element, kAXSubroleAttribute)
+        ) {
             return nil
         }
 
@@ -156,7 +182,7 @@ public enum AXFocusInspector {
         snap.title = copyString(element, kAXTitleAttribute)
         snap.identifier = copyString(element, kAXIdentifierAttribute)
         snap.placeholder = copyString(element, kAXPlaceholderValueAttribute)
-        snap.isSecure = snap.role == "AXSecureTextField" || snap.subrole == "AXSecureTextField"
+        snap.isSecure = isSecureTextField(role: snap.role, subrole: snap.subrole)
 
         if let value = copyString(element, kAXValueAttribute) {
             snap.value = value
@@ -232,6 +258,10 @@ public enum AXFocusInspector {
         if let string = ref as? String { return string }
         if let number = ref as? NSNumber { return number.stringValue }
         return nil
+    }
+
+    nonisolated static func isSecureTextField(role: String?, subrole: String?) -> Bool {
+        role == "AXSecureTextField" || subrole == "AXSecureTextField"
     }
 
     public static func getCaretRect() -> CGRect? {
