@@ -150,6 +150,7 @@ public final class SmartInputService: @unchecked Sendable {
     
     private let lock = NSLock()
     private var probabilisticSnippetWordsRemaining = 0
+    private var probabilisticSnippetWordsSinceReplacement = 0
     private var _isEnabled = true
     private var _instantGlobeSwitchingEnabled = false
     private var globeKeyState = GlobeKeyStateMachine()
@@ -1440,29 +1441,38 @@ public final class SmartInputService: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        let wasInCooldown = advanceProbabilisticSnippetWordLocked()
         if snippet.replacementProbability >= 1 {
-            if probabilisticSnippetWordsRemaining > 0 {
-                probabilisticSnippetWordsRemaining -= 1
-            }
             return true
         }
-        if probabilisticSnippetWordsRemaining > 0 {
-            probabilisticSnippetWordsRemaining -= 1
+        if wasInCooldown {
             return false
         }
-        guard probabilityRoll() < snippet.replacementProbability else {
+        guard probabilisticSnippetWordsSinceReplacement >= 25
+            || probabilityRoll() < snippet.replacementProbability else {
             return false
         }
+        probabilisticSnippetWordsSinceReplacement = 0
         probabilisticSnippetWordsRemaining = min(25, max(15, cooldownWordCount()))
         return true
     }
 
     private func noteCompletedWordForProbabilisticSnippetCooldown() {
         lock.lock()
+        _ = advanceProbabilisticSnippetWordLocked()
+        lock.unlock()
+    }
+
+    private func advanceProbabilisticSnippetWordLocked() -> Bool {
+        probabilisticSnippetWordsSinceReplacement = min(
+            25,
+            probabilisticSnippetWordsSinceReplacement + 1
+        )
+        let wasInCooldown = probabilisticSnippetWordsRemaining > 0
         if probabilisticSnippetWordsRemaining > 0 {
             probabilisticSnippetWordsRemaining -= 1
         }
-        lock.unlock()
+        return wasInCooldown
     }
 
     func shouldBufferSnippetInput(_ token: String, bundleID: String? = nil) -> Bool {

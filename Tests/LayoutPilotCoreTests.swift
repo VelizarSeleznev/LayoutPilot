@@ -1642,6 +1642,34 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertNotNil(service.snippetExpansion(bufferedToken: "hello", inputText: " "))
     }
 
+    func testProbabilisticSnippetForcesEligibleMatchByTwentyFifthWord() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL),
+            probabilityRoll: { 0.99 },
+            cooldownWordCount: { 25 }
+        )
+        service.textSnippets = [
+            TextSnippet(
+                trigger: "ok",
+                replacement: "your feedback has been noted",
+                isCaseSensitive: false,
+                requiresWordBoundary: true,
+                replacementProbability: 0.05
+            )
+        ]
+
+        for _ in 0..<24 {
+            XCTAssertNil(service.snippetExpansion(bufferedToken: "ordinary", inputText: " "))
+        }
+        XCTAssertEqual(
+            service.snippetExpansion(bufferedToken: "ok", inputText: " ")?.replacement,
+            "your feedback has been noted"
+        )
+    }
+
     func testProbabilisticCooldownDoesNotBlockManualSnippets() {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
