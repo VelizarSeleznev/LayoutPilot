@@ -188,7 +188,7 @@ struct SettingsView: View {
                         set: { appState.store.setAnonymousUsageStatisticsEnabled($0) }
                     ))
 
-                    Text("No exact replacement text, raw password, device identifier, or bundle IDs are sent. Rejected words are sanitized and sent only for non-browser apps.")
+                    Text("No entered text, exact replacement text, passwords, device identifiers, or bundle IDs are sent.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

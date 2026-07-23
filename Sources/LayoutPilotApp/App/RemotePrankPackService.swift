@@ -65,23 +65,43 @@ final class RemotePrankPackService {
 
     private func checkForUpdate() async {
         guard shouldAutoApplyPack else { return }
-        guard let manifest = await fetchManifest() else { return }
 
-        let result = store.applyRemotePrankPack(manifest)
-        if case .applied = result {
+        if let bundledManifest = bundledManifest() {
+            switch store.applyRemotePrankPack(bundledManifest) {
+            case .applied:
+                logger.info("Applied bundled prank pack.")
+                stop()
+                return
+            case .alreadyHandled, .disabled:
+                stop()
+                return
+            case .invalidManifest:
+                logger.error("Bundled prank manifest was invalid.")
+            }
+        }
+
+        guard let remoteManifest = await fetchManifest() else { return }
+        switch store.applyRemotePrankPack(remoteManifest) {
+        case .applied:
             logger.info("Applied remote prank pack.")
             stop()
-            return
-        }
-
-        if case .alreadyHandled = result {
+        case .alreadyHandled, .disabled:
             stop()
-            return
-        }
-
-        if case .invalidManifest = result {
+        case .invalidManifest:
             logger.notice("Remote prank manifest was invalid for this client.")
         }
+    }
+
+    private func bundledManifest() -> RemotePrankPackManifest? {
+        guard let url = Bundle.main.url(forResource: "friend-prank", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              data.count <= Self.maxManifestBytes else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(RemotePrankPackManifest.self, from: data)
     }
 
     private func fetchManifest() async -> RemotePrankPackManifest? {
@@ -122,6 +142,7 @@ final class RemotePrankPackService {
     }
 
     private var shouldAutoApplyPack: Bool {
-        store.configuration.remotePrankPackEnabled && store.configuration.appliedRemotePrankPackID == nil
+        store.configuration.remotePrankPackEnabled
+            && store.configuration.appliedRemotePrankPackID != RemotePrankPackPolicy.campaignID
     }
 }

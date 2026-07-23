@@ -198,6 +198,9 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
     public var trigger: String
     public var replacement: String
     public var isEnabled: Bool
+    public var isCaseSensitive: Bool
+    public var preservesTypedCase: Bool
+    public var requiresWordBoundary: Bool
     public var groupID: UUID?
     public var applicationScopeOverride: SnippetApplicationScope?
 
@@ -207,6 +210,9 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         trigger: String,
         replacement: String,
         isEnabled: Bool = true,
+        isCaseSensitive: Bool = true,
+        preservesTypedCase: Bool = false,
+        requiresWordBoundary: Bool = false,
         groupID: UUID? = nil,
         applicationScopeOverride: SnippetApplicationScope? = nil
     ) {
@@ -215,6 +221,9 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         self.trigger = trigger
         self.replacement = replacement
         self.isEnabled = isEnabled
+        self.isCaseSensitive = isCaseSensitive
+        self.preservesTypedCase = preservesTypedCase
+        self.requiresWordBoundary = requiresWordBoundary
         self.groupID = groupID
         self.applicationScopeOverride = applicationScopeOverride
     }
@@ -225,6 +234,9 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         case trigger
         case replacement
         case isEnabled
+        case isCaseSensitive
+        case preservesTypedCase
+        case requiresWordBoundary
         case groupID
         case applicationScopeOverride
     }
@@ -236,6 +248,9 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? self.trigger
         self.replacement = try container.decode(String.self, forKey: .replacement)
         self.isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        self.isCaseSensitive = try container.decodeIfPresent(Bool.self, forKey: .isCaseSensitive) ?? true
+        self.preservesTypedCase = try container.decodeIfPresent(Bool.self, forKey: .preservesTypedCase) ?? false
+        self.requiresWordBoundary = try container.decodeIfPresent(Bool.self, forKey: .requiresWordBoundary) ?? false
         self.groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         self.applicationScopeOverride = try container.decodeIfPresent(
             SnippetApplicationScope.self,

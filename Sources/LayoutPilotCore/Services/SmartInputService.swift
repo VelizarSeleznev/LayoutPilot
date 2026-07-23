@@ -478,6 +478,7 @@ public final class SmartInputService: @unchecked Sendable {
     struct SnippetExpansion {
         let snippet: TextSnippet
         let original: String
+        let replacement: String
         let replacingToken: String
         let boundary: String
     }
@@ -848,14 +849,14 @@ public final class SmartInputService: @unchecked Sendable {
             setDeferredShortTokenConversion(nil)
             replaceToken(
                 replacing: expansion.replacingToken,
-                with: expansion.snippet.replacement,
+                with: expansion.replacement,
                 boundary: expansion.boundary
             )
             recordReplacementForUndo(
                 mode: "snippet",
                 reason: "expanded text snippet trigger",
                 original: expansion.original,
-                replacement: expansion.snippet.replacement,
+                replacement: expansion.replacement,
                 boundary: expansion.boundary,
                 bundleID: activeBundleID,
                 originalLayoutID: currentInputSourceID(),
@@ -1368,7 +1369,7 @@ public final class SmartInputService: @unchecked Sendable {
             let allowed = bundleID.map {
                 TextSnippetPolicy.allows(snippet, in: $0, groups: groups)
             } ?? snippet.isEnabled
-            return allowed && snippet.trigger == token && !snippet.replacement.isEmpty
+            return allowed && snippetMatches(snippet, token: token) && !snippet.replacement.isEmpty
         }
     }
 
@@ -1377,15 +1378,29 @@ public final class SmartInputService: @unchecked Sendable {
         inputText: String,
         bundleID: String? = nil
     ) -> SnippetExpansion? {
+        if isSnippetWordBoundary(inputText),
+           let snippet = textSnippet(for: bufferedToken, bundleID: bundleID),
+           snippet.requiresWordBoundary {
+            return SnippetExpansion(
+                snippet: snippet,
+                original: bufferedToken,
+                replacement: Self.renderedSnippetReplacement(snippet, original: bufferedToken),
+                replacingToken: bufferedToken,
+                boundary: inputText
+            )
+        }
+
         switch textSnippetExpansionMode {
         case .immediately:
             let original = bufferedToken + inputText
-            guard let snippet = textSnippet(for: original, bundleID: bundleID) else {
+            guard let snippet = textSnippet(for: original, bundleID: bundleID),
+                  !snippet.requiresWordBoundary else {
                 return nil
             }
             return SnippetExpansion(
                 snippet: snippet,
                 original: original,
+                replacement: Self.renderedSnippetReplacement(snippet, original: original),
                 replacingToken: bufferedToken,
                 boundary: ""
             )
@@ -1397,6 +1412,7 @@ public final class SmartInputService: @unchecked Sendable {
             return SnippetExpansion(
                 snippet: snippet,
                 original: bufferedToken,
+                replacement: Self.renderedSnippetReplacement(snippet, original: bufferedToken),
                 replacingToken: bufferedToken,
                 boundary: inputText
             )
@@ -1405,6 +1421,10 @@ public final class SmartInputService: @unchecked Sendable {
 
     func shouldBufferSnippetInput(_ token: String, bundleID: String? = nil) -> Bool {
         if isSnippetTriggerContinuation(token, bundleID: bundleID) {
+            return true
+        }
+        if let snippet = textSnippet(for: token, bundleID: bundleID),
+           snippet.requiresWordBoundary {
             return true
         }
         return textSnippetExpansionMode == .afterSpace
@@ -1420,8 +1440,51 @@ public final class SmartInputService: @unchecked Sendable {
             let allowed = bundleID.map {
                 TextSnippetPolicy.allows(snippet, in: $0, groups: groups)
             } ?? snippet.isEnabled
-            return allowed && snippet.trigger.hasPrefix(token) && snippet.trigger != token
+            guard allowed else { return false }
+            if snippet.isCaseSensitive {
+                return snippet.trigger.hasPrefix(token) && snippet.trigger != token
+            }
+            let normalizedTrigger = snippet.trigger.lowercased()
+            let normalizedToken = token.lowercased()
+            return normalizedTrigger.hasPrefix(normalizedToken) && normalizedTrigger != normalizedToken
         }
+    }
+
+    static func renderedSnippetReplacement(_ snippet: TextSnippet, original: String) -> String {
+        guard snippet.preservesTypedCase else {
+            return snippet.replacement
+        }
+
+        var rendered = snippet.replacement.replacingOccurrences(
+            of: snippet.trigger,
+            with: original,
+            options: [.caseInsensitive]
+        )
+        guard let originalFirstLetter = original.first(where: { character in
+            character.unicodeScalars.allSatisfy(CharacterSet.letters.contains)
+        }),
+        let replacementFirstLetterIndex = rendered.firstIndex(where: { character in
+            character.unicodeScalars.allSatisfy(CharacterSet.letters.contains)
+        }) else {
+            return rendered
+        }
+
+        rendered.replaceSubrange(
+            replacementFirstLetterIndex...replacementFirstLetterIndex,
+            with: String(originalFirstLetter)
+        )
+        return rendered
+    }
+
+    private func snippetMatches(_ snippet: TextSnippet, token: String) -> Bool {
+        if snippet.isCaseSensitive {
+            return snippet.trigger == token
+        }
+        return snippet.trigger.caseInsensitiveCompare(token) == .orderedSame
+    }
+
+    private func isSnippetWordBoundary(_ text: String) -> Bool {
+        text.count == 1 && text.allSatisfy { !isWordCharacter($0) }
     }
     
     private func eventText(_ event: CGEvent) -> String? {

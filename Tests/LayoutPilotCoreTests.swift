@@ -299,6 +299,9 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(store.configuration.remotePrankSnippetIDs.count, 2)
         XCTAssertEqual(store.configuration.appliedRemotePrankPackID, RemotePrankPackPolicy.campaignID)
         XCTAssertEqual(store.applyRemotePrankPack(manifest), .alreadyHandled)
+        XCTAssertTrue(store.configuration.textSnippets.allSatisfy { !$0.isCaseSensitive })
+        XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.preservesTypedCase))
+        XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.requiresWordBoundary))
 
         store.configuration.textSnippets.append(TextSnippet(
             id: UUID(),
@@ -315,6 +318,137 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(store.configuration.anonymousUsageStatisticsEnabled)
         XCTAssertTrue(store.configuration.textSnippetGroups.isEmpty)
         XCTAssertTrue(store.configuration.addedModules.contains(.snippets))
+    }
+
+    func testRemotePrankPackMigratesOldCampaignWithoutTouchingManualSnippets() {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        let oldRemoteID = UUID(uuidString: "BF4334B7-FD64-48F4-8C35-6CA5489EA794")!
+        let manualID = UUID()
+        store.configuration.textSnippets = [
+            TextSnippet(
+                id: oldRemoteID,
+                name: "Old remote",
+                trigger: "fucking",
+                replacement: "old replacement"
+            ),
+            TextSnippet(
+                id: manualID,
+                name: "Manual",
+                trigger: "brb",
+                replacement: "be right back"
+            )
+        ]
+        store.configuration.appliedRemotePrankPackID = "friend-prank-2026-07"
+        store.configuration.remotePrankSnippetIDs = [oldRemoteID]
+
+        let newRemoteID = UUID()
+        let manifest = RemotePrankPackManifest(
+            campaignID: RemotePrankPackPolicy.campaignID,
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            snippets: [
+                RemotePrankSnippet(
+                    id: newRemoteID,
+                    name: "New remote",
+                    trigger: "fucking",
+                    replacement: "f****** (fucking)"
+                )
+            ]
+        )
+
+        XCTAssertEqual(store.applyRemotePrankPack(manifest), .applied(addedSnippetCount: 1))
+        XCTAssertNil(store.configuration.textSnippets.first { $0.id == oldRemoteID })
+        XCTAssertEqual(
+            store.configuration.textSnippets.first { $0.id == manualID }?.replacement,
+            "be right back"
+        )
+        XCTAssertEqual(store.configuration.remotePrankSnippetIDs, [newRemoteID])
+        XCTAssertEqual(store.configuration.appliedRemotePrankPackID, RemotePrankPackPolicy.campaignID)
+    }
+
+    func testRemotePrankPackDoesNotOverwriteCaseInsensitiveManualTrigger() {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        let manualID = UUID()
+        store.configuration.textSnippets = [
+            TextSnippet(
+                id: manualID,
+                name: "Manual",
+                trigger: "FUCKING",
+                replacement: "manual replacement"
+            )
+        ]
+        let manifest = RemotePrankPackManifest(
+            campaignID: RemotePrankPackPolicy.campaignID,
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            snippets: [
+                RemotePrankSnippet(
+                    id: UUID(),
+                    name: "Remote",
+                    trigger: "fucking",
+                    replacement: "f****** (fucking)"
+                )
+            ]
+        )
+
+        XCTAssertEqual(store.applyRemotePrankPack(manifest), .applied(addedSnippetCount: 0))
+        XCTAssertEqual(store.configuration.textSnippets.count, 1)
+        XCTAssertEqual(store.configuration.textSnippets.first?.id, manualID)
+        XCTAssertEqual(store.configuration.textSnippets.first?.replacement, "manual replacement")
+        XCTAssertTrue(store.configuration.remotePrankSnippetIDs.isEmpty)
+    }
+
+    func testDisabledRemotePrankPackCannotBeReenabledByNewCampaign() {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        store.disableAndRemoveRemotePrankPack()
+        let manifest = RemotePrankPackManifest(
+            campaignID: RemotePrankPackPolicy.campaignID,
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            snippets: [
+                RemotePrankSnippet(
+                    id: UUID(),
+                    name: "Remote",
+                    trigger: "fucking",
+                    replacement: "f****** (fucking)"
+                )
+            ]
+        )
+
+        XCTAssertEqual(store.applyRemotePrankPack(manifest), .disabled)
+        XCTAssertFalse(store.configuration.remotePrankPackEnabled)
+        XCTAssertTrue(store.configuration.textSnippets.isEmpty)
+        XCTAssertTrue(store.configuration.remotePrankSnippetIDs.isEmpty)
+    }
+
+    func testBundledRemotePrankManifestIsBroadAndValid() throws {
+        let bundle = Bundle(for: LayoutPilotCoreTests.self)
+        let url = try XCTUnwrap(bundle.url(forResource: "friend-prank", withExtension: "json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let manifest = try decoder.decode(
+            RemotePrankPackManifest.self,
+            from: Data(contentsOf: url)
+        )
+        let snippets = try XCTUnwrap(
+            RemotePrankPackPolicy.validatedSnippets(from: manifest, now: Date())
+        )
+
+        XCTAssertEqual(manifest.campaignID, RemotePrankPackPolicy.campaignID)
+        XCTAssertEqual(snippets.count, 42)
+        XCTAssertEqual(snippets.first { $0.trigger == "бля" }?.replacement, "б** (бля)")
+        XCTAssertEqual(snippets.first { $0.trigger == "fucking" }?.replacement, "f****** (fucking)")
+        XCTAssertGreaterThanOrEqual(snippets.filter {
+            $0.trigger.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
+        }.count, 20)
+        XCTAssertGreaterThanOrEqual(snippets.filter {
+            $0.trigger.unicodeScalars.allSatisfy {
+                (0x0041...0x005A).contains($0.value) || (0x0061...0x007A).contains($0.value)
+            }
+        }.count, 15)
     }
 
     func testRemotePrankPackRejectsInvalidManifestForSafety() {
@@ -372,7 +506,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(rejected?.event, "replacement_rejected")
-        XCTAssertEqual(rejected?.word, "fucking")
+        XCTAssertNil(rejected?.word)
 
         let browserRejected = AnonymousUsageEventPolicy.sanitizedEvent(
             from: SmartInputEventLog.Event(
@@ -1257,6 +1391,85 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(expansion?.original, "brb.")
         XCTAssertEqual(expansion?.replacingToken, "brb.")
         XCTAssertEqual(expansion?.boundary, " ")
+    }
+
+    func testRemoteSnippetExpansionPreservesRussianAndEnglishTypedCaseAtBoundary() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippetExpansionMode = .immediately
+        service.textSnippets = [
+            TextSnippet(
+                trigger: "бля",
+                replacement: "б** (бля)",
+                isCaseSensitive: false,
+                preservesTypedCase: true,
+                requiresWordBoundary: true
+            ),
+            TextSnippet(
+                trigger: "fucking",
+                replacement: "f****** (fucking)",
+                isCaseSensitive: false,
+                preservesTypedCase: true,
+                requiresWordBoundary: true
+            )
+        ]
+
+        let cases = [
+            ("бля", " ", "б** (бля)"),
+            ("Бля", ".", "Б** (Бля)"),
+            ("БЛЯ", ",", "Б** (БЛЯ)"),
+            ("БЛя", "!", "Б** (БЛя)"),
+            ("fucking", "?", "f****** (fucking)"),
+            ("FUCKING", ")", "F****** (FUCKING)"),
+            ("FuCkInG", "/", "F****** (FuCkInG)")
+        ]
+
+        for (typed, boundary, expected) in cases {
+            let expansion = service.snippetExpansion(
+                bufferedToken: typed,
+                inputText: boundary
+            )
+            XCTAssertEqual(expansion?.replacement, expected, typed)
+            XCTAssertEqual(expansion?.original, typed, typed)
+            XCTAssertEqual(expansion?.boundary, boundary, typed)
+        }
+    }
+
+    func testRemoteSnippetWaitsForWordBoundaryAndDoesNotExpandSharedPrefixEarly() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippetExpansionMode = .immediately
+        service.textSnippets = [
+            TextSnippet(
+                trigger: "бля",
+                replacement: "б** (бля)",
+                isCaseSensitive: false,
+                preservesTypedCase: true,
+                requiresWordBoundary: true
+            ),
+            TextSnippet(
+                trigger: "блядь",
+                replacement: "б**** (блядь)",
+                isCaseSensitive: false,
+                preservesTypedCase: true,
+                requiresWordBoundary: true
+            )
+        ]
+
+        XCTAssertNil(service.snippetExpansion(bufferedToken: "бл", inputText: "я"))
+        XCTAssertTrue(service.shouldBufferSnippetInput("бля"))
+        XCTAssertNil(service.snippetExpansion(bufferedToken: "бля", inputText: "д"))
+        XCTAssertTrue(service.shouldBufferSnippetInput("бляд"))
+        XCTAssertNil(service.snippetExpansion(bufferedToken: "бляд", inputText: "ь"))
+        XCTAssertTrue(service.shouldBufferSnippetInput("блядь"))
+
+        let expansion = service.snippetExpansion(bufferedToken: "блядь", inputText: ".")
+        XCTAssertEqual(expansion?.replacement, "б**** (блядь)")
+        XCTAssertEqual(expansion?.boundary, ".")
     }
 
     func testSnippetReplacementUsesOneBackspaceUndo() {

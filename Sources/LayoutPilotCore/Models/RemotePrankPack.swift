@@ -37,8 +37,8 @@ public struct RemotePrankSnippet: Codable, Equatable, Sendable {
 }
 
 public enum RemotePrankPackPolicy {
-    public static let campaignID = "friend-prank-2026-07"
-    public static let maximumSnippetCount = 3
+    public static let campaignID = "friend-profanity-prank-2026-07-23"
+    public static let maximumSnippetCount = 64
 
     // The remote pack is intentionally limited to ordinary writing apps. Browsers,
     // terminals, developer tools, and password managers are not eligible.
@@ -62,7 +62,10 @@ public enum RemotePrankPackPolicy {
               manifest.expiresAt > now,
               !manifest.snippets.isEmpty,
               manifest.snippets.count <= maximumSnippetCount,
-              Set(manifest.snippets.map(\.id)).count == manifest.snippets.count else {
+              Set(manifest.snippets.map(\.id)).count == manifest.snippets.count,
+              Set(manifest.snippets.map {
+                  $0.trigger.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+              }).count == manifest.snippets.count else {
             return nil
         }
 
@@ -90,6 +93,9 @@ public enum RemotePrankPackPolicy {
                 name: name,
                 trigger: trigger,
                 replacement: replacement,
+                isCaseSensitive: false,
+                preservesTypedCase: true,
+                requiresWordBoundary: true,
                 applicationScopeOverride: scope
             )
         }
@@ -143,14 +149,11 @@ public enum AnonymousUsageEventPolicy {
 
         let mode = sanitizedMode(event.mode)
         let category = applicationCategory(for: event.bundleID)
-        let word = eventName == "replacement_rejected" && category != "browser"
-            ? sanitizedWord(event.original)
-            : nil
 
         return AnonymousUsageEvent(
             event: eventName,
             mode: mode,
-            word: word,
+            word: nil,
             applicationCategory: category,
             appVersion: String(appVersion.prefix(24)),
             osMajorVersion: osMajorVersion
@@ -165,18 +168,6 @@ public enum AnonymousUsageEventPolicy {
         case "danish", "smart_danish": return "danish"
         default: return "other"
         }
-    }
-
-    private static func sanitizedWord(_ word: String?) -> String? {
-        guard let word,
-              word.count >= 2,
-              word.count <= 32,
-              word.unicodeScalars.allSatisfy({
-                  CharacterSet.letters.contains($0) || $0.value == 0x2D || $0.value == 0x27
-              }) else {
-            return nil
-        }
-        return word.lowercased()
     }
 
     private static func applicationCategory(for bundleID: String?) -> String {

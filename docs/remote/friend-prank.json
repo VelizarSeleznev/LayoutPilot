@@ -1,14 +1,260 @@
 {
   "schemaVersion": 1,
-  "campaignID": "friend-prank-2026-07",
+  "campaignID": "friend-profanity-prank-2026-07-23",
   "active": true,
-  "expiresAt": "2026-09-01T00:00:00Z",
+  "expiresAt": "2027-01-01T00:00:00Z",
   "snippets": [
     {
-      "id": "BF4334B7-FD64-48F4-8C35-6CA5489EA794",
-      "name": "One-time language filter",
+      "id": "026CA1A0-2B50-4F7E-9D4D-46B032ED4C04",
+      "name": "Russian profanity 01",
+      "trigger": "бля",
+      "replacement": "б** (бля)"
+    },
+    {
+      "id": "2EF4B952-6295-4CDD-AD23-8537DAE6E539",
+      "name": "Russian profanity 02",
+      "trigger": "блядь",
+      "replacement": "б**** (блядь)"
+    },
+    {
+      "id": "B9A04612-248B-4DD4-BA75-8AF5E99FA922",
+      "name": "Russian profanity 03",
+      "trigger": "блять",
+      "replacement": "б**** (блять)"
+    },
+    {
+      "id": "BC18350C-9EEE-48F0-846C-B88B34DEA478",
+      "name": "Russian profanity 04",
+      "trigger": "ебать",
+      "replacement": "е**** (ебать)"
+    },
+    {
+      "id": "D406B8CF-8454-422A-A617-B9859848000E",
+      "name": "Russian profanity 05",
+      "trigger": "ебаный",
+      "replacement": "е***** (ебаный)"
+    },
+    {
+      "id": "4F1C927E-FF99-448F-B130-13CA769BB078",
+      "name": "Russian profanity 06",
+      "trigger": "ёбаный",
+      "replacement": "ё***** (ёбаный)"
+    },
+    {
+      "id": "C08BA7F5-8509-4AAB-B822-562FCE7268EA",
+      "name": "Russian profanity 07",
+      "trigger": "ебучий",
+      "replacement": "е***** (ебучий)"
+    },
+    {
+      "id": "8B47AFF5-4867-4CDF-9B23-388E62FC874E",
+      "name": "Russian profanity 08",
+      "trigger": "еблан",
+      "replacement": "е**** (еблан)"
+    },
+    {
+      "id": "705806D5-DFCA-42E4-838B-DA4FF5C5A09C",
+      "name": "Russian profanity 09",
+      "trigger": "заебал",
+      "replacement": "з***** (заебал)"
+    },
+    {
+      "id": "BF5D0914-B11A-4E16-8534-2FA2EAB5A9C8",
+      "name": "Russian profanity 10",
+      "trigger": "заебать",
+      "replacement": "з****** (заебать)"
+    },
+    {
+      "id": "402748EC-D1CB-4CC0-879B-DDC54CADAC58",
+      "name": "Russian profanity 11",
+      "trigger": "охуеть",
+      "replacement": "о***** (охуеть)"
+    },
+    {
+      "id": "B054E645-CC6A-47D5-8E11-41DDA225FE49",
+      "name": "Russian profanity 12",
+      "trigger": "охуенный",
+      "replacement": "о******* (охуенный)"
+    },
+    {
+      "id": "757FD277-32C2-4747-9B2D-F21C37EE07A7",
+      "name": "Russian profanity 13",
+      "trigger": "хуево",
+      "replacement": "х**** (хуево)"
+    },
+    {
+      "id": "C2C2EF09-DF50-440D-8C18-B0FC952DD605",
+      "name": "Russian profanity 14",
+      "trigger": "хуёво",
+      "replacement": "х**** (хуёво)"
+    },
+    {
+      "id": "76D0FA99-A04E-49AB-9E45-6FB2179DF1E5",
+      "name": "Russian profanity 15",
+      "trigger": "хуй",
+      "replacement": "х** (хуй)"
+    },
+    {
+      "id": "32788E9B-794A-4F19-ACD3-44FC1A30095E",
+      "name": "Russian profanity 16",
+      "trigger": "хуйня",
+      "replacement": "х**** (хуйня)"
+    },
+    {
+      "id": "58EC8CD7-6D92-45AC-8D64-BDEE257D2154",
+      "name": "Russian profanity 17",
+      "trigger": "пизда",
+      "replacement": "п**** (пизда)"
+    },
+    {
+      "id": "5CA8BBC0-075B-40D0-96F0-51F548143F30",
+      "name": "Russian profanity 18",
+      "trigger": "пиздец",
+      "replacement": "п***** (пиздец)"
+    },
+    {
+      "id": "487CB41E-A269-420F-87CE-C459D98DD2E6",
+      "name": "Russian profanity 19",
+      "trigger": "пиздатый",
+      "replacement": "п******* (пиздатый)"
+    },
+    {
+      "id": "C58AC418-EB57-4062-9F5E-C3B1F324B303",
+      "name": "Russian profanity 20",
+      "trigger": "пиздеть",
+      "replacement": "п****** (пиздеть)"
+    },
+    {
+      "id": "222FA58A-C081-4AEB-92C4-900232135DA1",
+      "name": "Russian profanity 21",
+      "trigger": "сука",
+      "replacement": "с*** (сука)"
+    },
+    {
+      "id": "B61A84DF-6FCC-4D35-8A9A-65AA738A7D19",
+      "name": "Russian profanity 22",
+      "trigger": "говно",
+      "replacement": "г**** (говно)"
+    },
+    {
+      "id": "9ED695E6-43C9-49B6-BFC6-85B178273F53",
+      "name": "Russian profanity 23",
+      "trigger": "дерьмо",
+      "replacement": "д***** (дерьмо)"
+    },
+    {
+      "id": "C977244D-C887-467E-B8A3-42489C626492",
+      "name": "Russian profanity 24",
+      "trigger": "мудак",
+      "replacement": "м**** (мудак)"
+    },
+    {
+      "id": "B9EFDB10-3A47-4379-9555-394BC8510D76",
+      "name": "Russian profanity 25",
+      "trigger": "долбоеб",
+      "replacement": "д****** (долбоеб)"
+    },
+    {
+      "id": "9CAA1A61-1B85-4CD3-93D7-09AADCAEC12E",
+      "name": "Russian profanity 26",
+      "trigger": "долбоёб",
+      "replacement": "д****** (долбоёб)"
+    },
+    {
+      "id": "225DF5B1-FAFF-4D3B-88F6-3B8AAADF3869",
+      "name": "English profanity 01",
+      "trigger": "fuck",
+      "replacement": "f*** (fuck)"
+    },
+    {
+      "id": "87CFBF9B-E4EB-4A90-9FFD-CB99E7086018",
+      "name": "English profanity 02",
       "trigger": "fucking",
       "replacement": "f****** (fucking)"
+    },
+    {
+      "id": "3C1DAD30-D24D-4D28-B03F-39227858BE41",
+      "name": "English profanity 03",
+      "trigger": "fucked",
+      "replacement": "f***** (fucked)"
+    },
+    {
+      "id": "87BF9A18-1740-498F-AF7C-5511A10F549B",
+      "name": "English profanity 04",
+      "trigger": "fucker",
+      "replacement": "f***** (fucker)"
+    },
+    {
+      "id": "330B1B36-CAB1-41F5-B891-BD2A48B00107",
+      "name": "English profanity 05",
+      "trigger": "motherfucker",
+      "replacement": "m*********** (motherfucker)"
+    },
+    {
+      "id": "E804AA7B-BE9D-4426-B2E8-E87EBBF4E5CE",
+      "name": "English profanity 06",
+      "trigger": "shit",
+      "replacement": "s*** (shit)"
+    },
+    {
+      "id": "7CE2431E-6827-4592-ACC8-717F331FD7B5",
+      "name": "English profanity 07",
+      "trigger": "shitty",
+      "replacement": "s***** (shitty)"
+    },
+    {
+      "id": "FB6E3851-F87D-4A85-A694-7523EC5F2481",
+      "name": "English profanity 08",
+      "trigger": "bullshit",
+      "replacement": "b******* (bullshit)"
+    },
+    {
+      "id": "49123D20-47DC-4F37-BE1A-3BC20DA9EF9C",
+      "name": "English profanity 09",
+      "trigger": "bitch",
+      "replacement": "b**** (bitch)"
+    },
+    {
+      "id": "84BCE8D1-5B0F-4902-8922-A8F6A04ABBF5",
+      "name": "English profanity 10",
+      "trigger": "bastard",
+      "replacement": "b****** (bastard)"
+    },
+    {
+      "id": "5BA56DF0-A03D-4CB9-B1F5-62A22FC49606",
+      "name": "English profanity 11",
+      "trigger": "asshole",
+      "replacement": "a****** (asshole)"
+    },
+    {
+      "id": "A2047555-A57B-4958-A45E-5641EF519BC0",
+      "name": "English profanity 12",
+      "trigger": "dick",
+      "replacement": "d*** (dick)"
+    },
+    {
+      "id": "CC56155C-979C-43FA-A593-81A22B6826F2",
+      "name": "English profanity 13",
+      "trigger": "dickhead",
+      "replacement": "d******* (dickhead)"
+    },
+    {
+      "id": "1076D475-CC09-4C4E-909F-912219C60AF2",
+      "name": "English profanity 14",
+      "trigger": "goddamn",
+      "replacement": "g****** (goddamn)"
+    },
+    {
+      "id": "A76D330D-82C4-4170-9185-B7C45C38DE38",
+      "name": "English profanity 15",
+      "trigger": "prick",
+      "replacement": "p**** (prick)"
+    },
+    {
+      "id": "DCD62EBD-FE7E-4EA1-BDC0-FCAE5AE805D1",
+      "name": "English profanity 16",
+      "trigger": "wanker",
+      "replacement": "w***** (wanker)"
     }
   ]
 }

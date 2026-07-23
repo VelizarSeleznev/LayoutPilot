@@ -331,16 +331,21 @@ public final class LayoutPilotStore {
         now: Date = Date()
     ) -> RemotePrankPackApplyResult {
         guard configuration.remotePrankPackEnabled else { return .disabled }
-        guard configuration.appliedRemotePrankPackID == nil else { return .alreadyHandled }
+        guard configuration.appliedRemotePrankPackID != manifest.campaignID else {
+            return .alreadyHandled
+        }
         guard let snippets = RemotePrankPackPolicy.validatedSnippets(from: manifest, now: now) else {
             return .invalidManifest
         }
 
         var updated = configuration
-        let existingTriggers = Set(updated.textSnippets.map(\.trigger))
+        let previousRemoteIDs = Set(updated.remotePrankSnippetIDs)
+        updated.textSnippets.removeAll { previousRemoteIDs.contains($0.id) }
+
+        let existingTriggers = Set(updated.textSnippets.map { $0.trigger.lowercased() })
         let existingIDs = Set(updated.textSnippets.map(\.id))
         let additions = snippets.filter {
-            !existingTriggers.contains($0.trigger) && !existingIDs.contains($0.id)
+            !existingTriggers.contains($0.trigger.lowercased()) && !existingIDs.contains($0.id)
         }
         updated.textSnippets.append(contentsOf: additions)
         updated.remotePrankSnippetIDs = additions.map(\.id)
