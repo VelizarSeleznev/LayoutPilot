@@ -202,6 +202,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
     public var preservesTypedCase: Bool
     public var requiresWordBoundary: Bool
     public var allowsInRestrictedApplications: Bool
+    public var replacementProbability: Double
     public var groupID: UUID?
     public var applicationScopeOverride: SnippetApplicationScope?
 
@@ -215,6 +216,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         preservesTypedCase: Bool = false,
         requiresWordBoundary: Bool = false,
         allowsInRestrictedApplications: Bool = false,
+        replacementProbability: Double = 1,
         groupID: UUID? = nil,
         applicationScopeOverride: SnippetApplicationScope? = nil
     ) {
@@ -227,6 +229,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         self.preservesTypedCase = preservesTypedCase
         self.requiresWordBoundary = requiresWordBoundary
         self.allowsInRestrictedApplications = allowsInRestrictedApplications
+        self.replacementProbability = replacementProbability
         self.groupID = groupID
         self.applicationScopeOverride = applicationScopeOverride
     }
@@ -241,6 +244,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         case preservesTypedCase
         case requiresWordBoundary
         case allowsInRestrictedApplications
+        case replacementProbability
         case groupID
         case applicationScopeOverride
     }
@@ -259,6 +263,10 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
             Bool.self,
             forKey: .allowsInRestrictedApplications
         ) ?? false
+        self.replacementProbability = try container.decodeIfPresent(
+            Double.self,
+            forKey: .replacementProbability
+        ) ?? 1
         self.groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         self.applicationScopeOverride = try container.decodeIfPresent(
             SnippetApplicationScope.self,

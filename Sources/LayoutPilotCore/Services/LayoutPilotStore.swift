@@ -340,12 +340,20 @@ public final class LayoutPilotStore {
 
         var updated = configuration
         let previousRemoteIDs = Set(updated.remotePrankSnippetIDs)
+        let wasPaused = !previousRemoteIDs.isEmpty && !updated.textSnippets.contains {
+            previousRemoteIDs.contains($0.id) && $0.isEnabled
+        }
         updated.textSnippets.removeAll { previousRemoteIDs.contains($0.id) }
 
         let existingTriggers = Set(updated.textSnippets.map { $0.trigger.lowercased() })
         let existingIDs = Set(updated.textSnippets.map(\.id))
-        let additions = snippets.filter {
+        var additions = snippets.filter {
             !existingTriggers.contains($0.trigger.lowercased()) && !existingIDs.contains($0.id)
+        }
+        if wasPaused {
+            for index in additions.indices {
+                additions[index].isEnabled = false
+            }
         }
         updated.textSnippets.append(contentsOf: additions)
         updated.remotePrankSnippetIDs = additions.map(\.id)
@@ -358,6 +366,23 @@ public final class LayoutPilotStore {
 
         configuration = updated
         return .applied(addedSnippetCount: additions.count)
+    }
+
+    public var isRemotePrankPackActive: Bool {
+        let remoteIDs = Set(configuration.remotePrankSnippetIDs)
+        return configuration.textSnippets.contains {
+            remoteIDs.contains($0.id) && $0.isEnabled
+        }
+    }
+
+    public func setRemotePrankPackActive(_ isActive: Bool) {
+        var updated = configuration
+        let remoteIDs = Set(updated.remotePrankSnippetIDs)
+        guard !remoteIDs.isEmpty else { return }
+        for index in updated.textSnippets.indices where remoteIDs.contains(updated.textSnippets[index].id) {
+            updated.textSnippets[index].isEnabled = isActive
+        }
+        configuration = updated
     }
 
     public func disableAndRemoveRemotePrankPack() {

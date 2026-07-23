@@ -149,10 +149,10 @@ struct SettingsView: View {
                 Section("Remote Experiment") {
                     if appState.store.configuration.remotePrankPackEnabled {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Remote prank pack is enabled on this install.")
+                            Text(remotePrankPackStatus)
                                 .font(.headline)
                             if appState.store.configuration.appliedRemotePrankPackID != nil {
-                                Text("A remote prank pack has already been handled for this install.")
+                                Text("Replacements use low per-match probabilities with a 15–25 word cooldown. The pack can be paused without removing its snippets.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
@@ -161,14 +161,26 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            Button("Disable & Remove Remote Pack") {
-                                appState.disableAndRemoveRemotePrankPack()
-                                appState.syncAnonymousUsageReporting()
+                            if !appState.store.configuration.remotePrankSnippetIDs.isEmpty {
+                                HStack {
+                                    Button(appState.store.isRemotePrankPackActive ? "Disable" : "Enable") {
+                                        appState.setRemotePrankPackActive(
+                                            !appState.store.isRemotePrankPackActive
+                                        )
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+
+                                    Button("Fully Delete") {
+                                        appState.disableAndRemoveRemotePrankPack()
+                                        appState.syncAnonymousUsageReporting()
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                    .foregroundStyle(.red)
+                                    .tint(.red)
+                                }
                             }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .foregroundStyle(.red)
-                            .tint(.red)
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
@@ -200,6 +212,15 @@ struct SettingsView: View {
         .onAppear {
             updaterService.refreshState()
         }
+    }
+
+    private var remotePrankPackStatus: String {
+        guard appState.store.configuration.appliedRemotePrankPackID != nil else {
+            return "Remote prank pack is enabled on this install."
+        }
+        return appState.store.isRemotePrankPackActive
+            ? "Remote prank pack is active."
+            : "Remote prank pack is installed but disabled."
     }
 
     private var defaultAutoSwitchSelection: String {

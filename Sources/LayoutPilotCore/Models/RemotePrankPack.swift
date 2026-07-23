@@ -5,6 +5,7 @@ public struct RemotePrankPackManifest: Codable, Equatable, Sendable {
     public var campaignID: String
     public var active: Bool
     public var expiresAt: Date
+    public var defaultProbability: Double?
     public var snippets: [RemotePrankSnippet]
 
     public init(
@@ -12,12 +13,14 @@ public struct RemotePrankPackManifest: Codable, Equatable, Sendable {
         campaignID: String,
         active: Bool,
         expiresAt: Date,
+        defaultProbability: Double? = nil,
         snippets: [RemotePrankSnippet]
     ) {
         self.schemaVersion = schemaVersion
         self.campaignID = campaignID
         self.active = active
         self.expiresAt = expiresAt
+        self.defaultProbability = defaultProbability
         self.snippets = snippets
     }
 }
@@ -27,18 +30,26 @@ public struct RemotePrankSnippet: Codable, Equatable, Sendable {
     public var name: String
     public var trigger: String
     public var replacement: String
+    public var probability: Double?
 
-    public init(id: UUID, name: String, trigger: String, replacement: String) {
+    public init(
+        id: UUID,
+        name: String,
+        trigger: String,
+        replacement: String,
+        probability: Double? = nil
+    ) {
         self.id = id
         self.name = name
         self.trigger = trigger
         self.replacement = replacement
+        self.probability = probability
     }
 }
 
 public enum RemotePrankPackPolicy {
-    public static let campaignID = "friend-profanity-prank-global-2026-07-23"
-    public static let maximumSnippetCount = 64
+    public static let campaignID = "friend-random-prank-global-2026-07-23"
+    public static let maximumSnippetCount = 128
 
     public static func validatedSnippets(
         from manifest: RemotePrankPackManifest,
@@ -50,6 +61,8 @@ public enum RemotePrankPackPolicy {
               manifest.expiresAt > now,
               !manifest.snippets.isEmpty,
               manifest.snippets.count <= maximumSnippetCount,
+              (manifest.defaultProbability ?? 1) > 0,
+              (manifest.defaultProbability ?? 1) <= 1,
               Set(manifest.snippets.map(\.id)).count == manifest.snippets.count,
               Set(manifest.snippets.map {
                   $0.trigger.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -62,14 +75,17 @@ public enum RemotePrankPackPolicy {
             let name = remote.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let trigger = remote.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
             let replacement = remote.replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+            let probability = remote.probability ?? manifest.defaultProbability ?? 1
             guard name.count >= 2,
                   name.count <= 48,
-                  trigger.count >= 2,
+                  trigger.count >= 1,
                   trigger.count <= 32,
                   trigger.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) }),
                   replacement.count >= 1,
                   replacement.count <= 120,
-                  replacement.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+                  replacement.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
+                  probability > 0,
+                  probability <= 1 else {
                 return nil
             }
 
@@ -79,9 +95,13 @@ public enum RemotePrankPackPolicy {
                 trigger: trigger,
                 replacement: replacement,
                 isCaseSensitive: false,
-                preservesTypedCase: true,
+                preservesTypedCase: replacement.range(
+                    of: "(\(trigger))",
+                    options: [.caseInsensitive]
+                ) != nil,
                 requiresWordBoundary: true,
                 allowsInRestrictedApplications: true,
+                replacementProbability: probability,
                 applicationScopeOverride: scope
             )
         }

@@ -275,6 +275,7 @@ final class LayoutPilotCoreTests: XCTestCase {
             campaignID: RemotePrankPackPolicy.campaignID,
             active: true,
             expiresAt: Date().addingTimeInterval(3600),
+            defaultProbability: 0.2,
             snippets: [
                 RemotePrankSnippet(
                     id: UUID(uuidString: "BF4334B7-FD64-48F4-8C35-6CA5489EA794")!,
@@ -286,7 +287,7 @@ final class LayoutPilotCoreTests: XCTestCase {
                     id: UUID(),
                     name: "One",
                     trigger: "shit",
-                    replacement: "s***"
+                    replacement: "s*** (shit)"
                 )
             ]
         )
@@ -301,6 +302,9 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(store.applyRemotePrankPack(manifest), .alreadyHandled)
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy { !$0.isCaseSensitive })
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.preservesTypedCase))
+        XCTAssertTrue(store.configuration.textSnippets.allSatisfy {
+            $0.replacementProbability == 0.2
+        })
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.requiresWordBoundary))
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy(\.allowsInRestrictedApplications))
         XCTAssertTrue(store.configuration.textSnippets.allSatisfy {
@@ -336,6 +340,46 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertTrue(store.configuration.addedModules.contains(.snippets))
     }
 
+    func testRemotePrankPackCanBePausedAndEnabledWithoutRemovingSnippets() {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        let remoteID = UUID()
+        let manualID = UUID()
+        let manifest = RemotePrankPackManifest(
+            campaignID: RemotePrankPackPolicy.campaignID,
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            defaultProbability: 0.1,
+            snippets: [
+                RemotePrankSnippet(
+                    id: remoteID,
+                    name: "Remote",
+                    trigger: "fucking",
+                    replacement: "f****** (fucking)"
+                )
+            ]
+        )
+        store.configuration.textSnippets = [
+            TextSnippet(id: manualID, trigger: "brb", replacement: "be right back")
+        ]
+
+        XCTAssertEqual(store.applyRemotePrankPack(manifest), .applied(addedSnippetCount: 1))
+        XCTAssertTrue(store.isRemotePrankPackActive)
+
+        store.setRemotePrankPackActive(false)
+
+        XCTAssertFalse(store.isRemotePrankPackActive)
+        XCTAssertFalse(store.configuration.textSnippets.first { $0.id == remoteID }?.isEnabled ?? true)
+        XCTAssertTrue(store.configuration.textSnippets.first { $0.id == manualID }?.isEnabled ?? false)
+        XCTAssertEqual(store.configuration.remotePrankSnippetIDs, [remoteID])
+        XCTAssertTrue(store.configuration.remotePrankPackEnabled)
+
+        store.setRemotePrankPackActive(true)
+
+        XCTAssertTrue(store.isRemotePrankPackActive)
+        XCTAssertTrue(store.configuration.textSnippets.first { $0.id == remoteID }?.isEnabled ?? false)
+    }
+
     func testRemotePrankPackMigratesOldCampaignWithoutTouchingManualSnippets() {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
@@ -346,7 +390,8 @@ final class LayoutPilotCoreTests: XCTestCase {
                 id: oldRemoteID,
                 name: "Old remote",
                 trigger: "fucking",
-                replacement: "old replacement"
+                replacement: "old replacement",
+                isEnabled: false
             ),
             TextSnippet(
                 id: manualID,
@@ -355,7 +400,7 @@ final class LayoutPilotCoreTests: XCTestCase {
                 replacement: "be right back"
             )
         ]
-        store.configuration.appliedRemotePrankPackID = "friend-profanity-prank-2026-07-23"
+        store.configuration.appliedRemotePrankPackID = "friend-profanity-prank-global-2026-07-23"
         store.configuration.remotePrankSnippetIDs = [oldRemoteID]
 
         let newRemoteID = UUID()
@@ -381,6 +426,8 @@ final class LayoutPilotCoreTests: XCTestCase {
         )
         XCTAssertEqual(store.configuration.remotePrankSnippetIDs, [newRemoteID])
         XCTAssertEqual(store.configuration.appliedRemotePrankPackID, RemotePrankPackPolicy.campaignID)
+        XCTAssertFalse(store.isRemotePrankPackActive)
+        XCTAssertFalse(store.configuration.textSnippets.first { $0.id == newRemoteID }?.isEnabled ?? true)
     }
 
     func testRemotePrankPackDoesNotOverwriteCaseInsensitiveManualTrigger() {
@@ -454,10 +501,21 @@ final class LayoutPilotCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(manifest.campaignID, RemotePrankPackPolicy.campaignID)
-        XCTAssertEqual(snippets.count, 42)
+        XCTAssertEqual(manifest.defaultProbability, 0.18)
+        XCTAssertEqual(snippets.count, 78)
         XCTAssertEqual(snippets.first { $0.trigger == "бля" }?.replacement, "б** (бля)")
         XCTAssertEqual(snippets.first { $0.trigger == "fucking" }?.replacement, "f****** (fucking)")
+        XCTAssertEqual(snippets.first { $0.trigger == "fucking" }?.replacementProbability, 0.18)
+        XCTAssertTrue(snippets.first { $0.trigger == "fucking" }?.preservesTypedCase ?? false)
+        XCTAssertEqual(snippets.first { $0.trigger == "я" }?.replacement, "мы с мамой")
+        XCTAssertEqual(snippets.first { $0.trigger == "я" }?.replacementProbability, 0.03)
+        XCTAssertEqual(snippets.first { $0.trigger == "i" }?.replacement, "we, as a family")
+        XCTAssertFalse(snippets.first { $0.trigger == "i" }?.preservesTypedCase ?? true)
+        XCTAssertEqual(snippets.first { $0.trigger == "no" }?.replacementProbability, 0.008)
         XCTAssertTrue(snippets.allSatisfy(\.allowsInRestrictedApplications))
+        XCTAssertTrue(snippets.allSatisfy {
+            $0.replacementProbability > 0 && $0.replacementProbability < 0.2
+        })
         XCTAssertTrue(snippets.allSatisfy {
             $0.applicationScopeOverride?.mode == .allApplications
         })
@@ -489,7 +547,22 @@ final class LayoutPilotCoreTests: XCTestCase {
             expiresAt: Date().addingTimeInterval(3600),
             snippets: [validSnippet]
         )
+        let invalidProbabilityManifest = RemotePrankPackManifest(
+            campaignID: RemotePrankPackPolicy.campaignID,
+            active: true,
+            expiresAt: Date().addingTimeInterval(3600),
+            defaultProbability: 0,
+            snippets: [
+                RemotePrankSnippet(
+                    id: UUID(),
+                    name: "Probability",
+                    trigger: "maybe",
+                    replacement: "the council will decide"
+                )
+            ]
+        )
         XCTAssertEqual(store.applyRemotePrankPack(invalidManifest), .invalidManifest)
+        XCTAssertEqual(store.applyRemotePrankPack(invalidProbabilityManifest), .invalidManifest)
         XCTAssertTrue(store.configuration.textSnippets.isEmpty)
         XCTAssertNil(store.configuration.appliedRemotePrankPackID)
     }
@@ -610,6 +683,7 @@ final class LayoutPilotCoreTests: XCTestCase {
 
         XCTAssertEqual(snippet.name, ";sig")
         XCTAssertFalse(snippet.allowsInRestrictedApplications)
+        XCTAssertEqual(snippet.replacementProbability, 1)
         XCTAssertNil(snippet.groupID)
         XCTAssertNil(snippet.applicationScopeOverride)
     }
@@ -1509,6 +1583,93 @@ final class LayoutPilotCoreTests: XCTestCase {
             XCTAssertEqual(expansion?.original, typed, typed)
             XCTAssertEqual(expansion?.boundary, boundary, typed)
         }
+    }
+
+    func testProbabilisticSnippetUsesPerMatchProbability() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let acceptedService = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL),
+            probabilityRoll: { 0.049 },
+            cooldownWordCount: { 15 }
+        )
+        let rejectedService = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL),
+            probabilityRoll: { 0.05 },
+            cooldownWordCount: { 15 }
+        )
+        let snippet = TextSnippet(
+            trigger: "maybe",
+            replacement: "the council will decide",
+            isCaseSensitive: false,
+            requiresWordBoundary: true,
+            replacementProbability: 0.05
+        )
+        acceptedService.textSnippets = [snippet]
+        rejectedService.textSnippets = [snippet]
+
+        XCTAssertEqual(
+            acceptedService.snippetExpansion(bufferedToken: "maybe", inputText: " ")?.replacement,
+            "the council will decide"
+        )
+        XCTAssertNil(rejectedService.snippetExpansion(bufferedToken: "maybe", inputText: " "))
+    }
+
+    func testProbabilisticSnippetCooldownAllowsAtMostOneReplacementPerFifteenWords() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL),
+            probabilityRoll: { 0 },
+            cooldownWordCount: { 15 }
+        )
+        service.textSnippets = [
+            TextSnippet(
+                trigger: "hello",
+                replacement: "Greetings, fellow citizen",
+                isCaseSensitive: false,
+                requiresWordBoundary: true,
+                replacementProbability: 0.5
+            )
+        ]
+
+        XCTAssertNotNil(service.snippetExpansion(bufferedToken: "hello", inputText: " "))
+        for _ in 0..<15 {
+            XCTAssertNil(service.snippetExpansion(bufferedToken: "hello", inputText: " "))
+        }
+        XCTAssertNotNil(service.snippetExpansion(bufferedToken: "hello", inputText: " "))
+    }
+
+    func testProbabilisticCooldownDoesNotBlockManualSnippets() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL),
+            probabilityRoll: { 0 },
+            cooldownWordCount: { 25 }
+        )
+        let probabilistic = TextSnippet(
+            trigger: "hello",
+            replacement: "Greetings, fellow citizen",
+            isCaseSensitive: false,
+            requiresWordBoundary: true,
+            replacementProbability: 0.5
+        )
+        let manual = TextSnippet(
+            trigger: "brb",
+            replacement: "be right back",
+            requiresWordBoundary: true
+        )
+        service.textSnippets = [probabilistic, manual]
+
+        XCTAssertNotNil(service.snippetExpansion(bufferedToken: "hello", inputText: " "))
+        XCTAssertEqual(
+            service.snippetExpansion(bufferedToken: "brb", inputText: " ")?.replacement,
+            "be right back"
+        )
     }
 
     func testRemoteSnippetWaitsForWordBoundaryAndDoesNotExpandSharedPrefixEarly() {

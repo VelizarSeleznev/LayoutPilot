@@ -76,6 +76,10 @@ final class LayoutPilotAppState {
         remotePrankPackService.syncWithCurrentConfiguration()
     }
 
+    func setRemotePrankPackActive(_ isActive: Bool) {
+        store.setRemotePrankPackActive(isActive)
+    }
+
     func syncAnonymousUsageReporting() {
         Self.configureRemoteUsageReporting(with: store.configuration)
     }

@@ -1,8 +1,9 @@
 {
   "schemaVersion": 1,
-  "campaignID": "friend-profanity-prank-global-2026-07-23",
+  "campaignID": "friend-random-prank-global-2026-07-23",
   "active": true,
   "expiresAt": "2027-01-01T00:00:00Z",
+  "defaultProbability": 0.18,
   "snippets": [
     {
       "id": "026CA1A0-2B50-4F7E-9D4D-46B032ED4C04",
@@ -255,6 +256,258 @@
       "name": "English profanity 16",
       "trigger": "wanker",
       "replacement": "w***** (wanker)"
+    },
+    {
+      "id": "662DC722-A578-46E4-A73D-669D5095F862",
+      "name": "Russian random 01",
+      "trigger": "я",
+      "replacement": "мы с мамой",
+      "probability": 0.03
+    },
+    {
+      "id": "D45B2EB6-B0F3-4CEA-B110-3DAE08D34DB7",
+      "name": "Russian random 02",
+      "trigger": "ты",
+      "replacement": "уважаемый пользователь",
+      "probability": 0.02
+    },
+    {
+      "id": "CC5EB033-5A22-41CF-A56C-43BBFD5C39F4",
+      "name": "Russian random 03",
+      "trigger": "ок",
+      "replacement": "я услышал твою позицию",
+      "probability": 0.05
+    },
+    {
+      "id": "9C811E6C-C9E1-481B-86C6-14424377777D",
+      "name": "Russian random 04",
+      "trigger": "почему",
+      "replacement": "почиму",
+      "probability": 0.06
+    },
+    {
+      "id": "A6E2E7FF-4EE3-449E-9A24-50CFE3896AA7",
+      "name": "Russian random 05",
+      "trigger": "что",
+      "replacement": "чё",
+      "probability": 0.025
+    },
+    {
+      "id": "1607AC96-3B43-44DF-A8F0-141A1E71D0A0",
+      "name": "Russian random 06",
+      "trigger": "привет",
+      "replacement": "доброго времени суток, коллеги",
+      "probability": 0.06
+    },
+    {
+      "id": "B08AF623-E395-4655-9FA8-AE5D57ABADB7",
+      "name": "Russian random 07",
+      "trigger": "спасибо",
+      "replacement": "низкий вам поклон",
+      "probability": 0.04
+    },
+    {
+      "id": "EF3A9213-128F-4828-A156-EC2ECF913670",
+      "name": "Russian random 08",
+      "trigger": "можно",
+      "replacement": "имею ли я моральное право",
+      "probability": 0.04
+    },
+    {
+      "id": "4077D7CF-9F09-428E-95E5-C95B57738B06",
+      "name": "Russian random 09",
+      "trigger": "сейчас",
+      "replacement": "в обозримом будущем",
+      "probability": 0.03
+    },
+    {
+      "id": "A3E46997-8A2C-4EE9-8967-DC817519269F",
+      "name": "Russian random 10",
+      "trigger": "норм",
+      "replacement": "удовлетворительно, без существенных замечаний",
+      "probability": 0.06
+    },
+    {
+      "id": "E39A1F2F-D585-490A-B814-8BCB99178D96",
+      "name": "Russian random 11",
+      "trigger": "нет",
+      "replacement": "да, конечно",
+      "probability": 0.005
+    },
+    {
+      "id": "3C311F55-74D9-4C3C-A749-B6723CF306B9",
+      "name": "English random 01",
+      "trigger": "i",
+      "replacement": "we, as a family",
+      "probability": 0.025
+    },
+    {
+      "id": "1E277BC7-4DDF-48B7-9C74-B43303D5896B",
+      "name": "English random 02",
+      "trigger": "you",
+      "replacement": "the defendant",
+      "probability": 0.02
+    },
+    {
+      "id": "F62D9A46-5141-4B44-846B-65EABA7CF706",
+      "name": "English random 03",
+      "trigger": "bro",
+      "replacement": "my esteemed colleague",
+      "probability": 0.05
+    },
+    {
+      "id": "28F8E49C-F749-44A7-B6A9-E3067B5A4300",
+      "name": "English random 04",
+      "trigger": "dude",
+      "replacement": "young man",
+      "probability": 0.05
+    },
+    {
+      "id": "5AF52B00-ED08-450C-9F17-1509B8A6F321",
+      "name": "English random 05",
+      "trigger": "ok",
+      "replacement": "your feedback has been noted",
+      "probability": 0.05
+    },
+    {
+      "id": "00BCB79E-A101-485E-AABB-467A4B3782E6",
+      "name": "English random 06",
+      "trigger": "okay",
+      "replacement": "your feedback has been noted",
+      "probability": 0.05
+    },
+    {
+      "id": "7B09766B-B9A0-4E82-886C-C836984F2DF1",
+      "name": "English random 07",
+      "trigger": "yes",
+      "replacement": "affirmative",
+      "probability": 0.03
+    },
+    {
+      "id": "81E50205-2581-498A-8D14-EF81AE5A7FD3",
+      "name": "English random 08",
+      "trigger": "no",
+      "replacement": "not at this stage",
+      "probability": 0.008
+    },
+    {
+      "id": "2E781299-1889-45C5-8ED1-11747711FD01",
+      "name": "English random 09",
+      "trigger": "maybe",
+      "replacement": "the council will decide",
+      "probability": 0.06
+    },
+    {
+      "id": "7312941E-83F6-4B79-B31C-71017970CA50",
+      "name": "English random 10",
+      "trigger": "sorry",
+      "replacement": "I regret the inconvenience caused",
+      "probability": 0.05
+    },
+    {
+      "id": "D6E2ACEF-EEED-436E-844B-0C071A40D086",
+      "name": "English random 11",
+      "trigger": "thanks",
+      "replacement": "you have my eternal gratitude",
+      "probability": 0.04
+    },
+    {
+      "id": "5E4A1E3A-E863-4A76-957E-91B21F3E6194",
+      "name": "English random 12",
+      "trigger": "please",
+      "replacement": "I humbly beg of you",
+      "probability": 0.04
+    },
+    {
+      "id": "C72331A4-951A-4D65-8AEB-BB415F443F12",
+      "name": "English random 13",
+      "trigger": "hello",
+      "replacement": "Greetings, fellow citizen",
+      "probability": 0.05
+    },
+    {
+      "id": "BC490B9B-C0D2-40F8-8330-1075A466DA17",
+      "name": "English random 14",
+      "trigger": "hi",
+      "replacement": "Greetings, fellow citizen",
+      "probability": 0.04
+    },
+    {
+      "id": "70A99234-0394-4EA5-B7BC-3CAE7A094D4C",
+      "name": "English random 15",
+      "trigger": "bye",
+      "replacement": "This concludes our correspondence",
+      "probability": 0.05
+    },
+    {
+      "id": "F34716E4-3479-4ECD-83A9-308486E078F0",
+      "name": "English random 16",
+      "trigger": "what",
+      "replacement": "what in tarnation",
+      "probability": 0.025
+    },
+    {
+      "id": "E2BCBC45-4980-4631-B1E6-80470D4C4D92",
+      "name": "English random 17",
+      "trigger": "why",
+      "replacement": "for what earthly reason",
+      "probability": 0.03
+    },
+    {
+      "id": "C92E360C-ED16-46BF-89DA-988F252AC1FD",
+      "name": "English random 18",
+      "trigger": "now",
+      "replacement": "at your earliest convenience",
+      "probability": 0.03
+    },
+    {
+      "id": "CCBD7EA5-9458-43F7-A0CB-9EE822D885F1",
+      "name": "English random 19",
+      "trigger": "later",
+      "replacement": "in the foreseeable future",
+      "probability": 0.05
+    },
+    {
+      "id": "6F026F8B-5F88-4AF5-BDA0-45436ED6D89F",
+      "name": "English random 20",
+      "trigger": "great",
+      "replacement": "acceptable under the circumstances",
+      "probability": 0.05
+    },
+    {
+      "id": "3D6ECAD4-8414-4372-9715-4730534D6B0B",
+      "name": "English random 21",
+      "trigger": "cool",
+      "replacement": "moderately impressive",
+      "probability": 0.05
+    },
+    {
+      "id": "44030170-0555-43FD-8D5F-7E76E355C6F0",
+      "name": "English random 22",
+      "trigger": "lol",
+      "replacement": "I am experiencing amusement",
+      "probability": 0.08
+    },
+    {
+      "id": "0C97C841-A483-4B48-9C05-F2EC244080ED",
+      "name": "English random 23",
+      "trigger": "lmao",
+      "replacement": "I have briefly lost composure",
+      "probability": 0.08
+    },
+    {
+      "id": "B6390A3E-0343-401E-92D0-8727B318945D",
+      "name": "English random 24",
+      "trigger": "idk",
+      "replacement": "the available evidence is inconclusive",
+      "probability": 0.08
+    },
+    {
+      "id": "7D67CC6A-44E4-4D9C-A9FB-07B0041289EB",
+      "name": "English random 25",
+      "trigger": "imo",
+      "replacement": "according to several unnamed sources",
+      "probability": 0.07
     }
   ]
 }

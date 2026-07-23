@@ -145,8 +145,11 @@ public final class SmartInputService: @unchecked Sendable {
     let contextHistory = ContextHistory()
     private let checker = NSSpellChecker.shared
     let learningStore: SmartInputLearningStore
+    private let probabilityRoll: @Sendable () -> Double
+    private let cooldownWordCount: @Sendable () -> Int
     
     private let lock = NSLock()
+    private var probabilisticSnippetWordsRemaining = 0
     private var _isEnabled = true
     private var _instantGlobeSwitchingEnabled = false
     private var globeKeyState = GlobeKeyStateMachine()
@@ -513,10 +516,18 @@ public final class SmartInputService: @unchecked Sendable {
     
     public init() {
         self.learningStore = .shared
+        self.probabilityRoll = { Double.random(in: 0..<1) }
+        self.cooldownWordCount = { Int.random(in: 15...25) }
     }
 
-    init(learningStore: SmartInputLearningStore) {
+    init(
+        learningStore: SmartInputLearningStore,
+        probabilityRoll: @escaping @Sendable () -> Double = { Double.random(in: 0..<1) },
+        cooldownWordCount: @escaping @Sendable () -> Int = { Int.random(in: 15...25) }
+    ) {
         self.learningStore = learningStore
+        self.probabilityRoll = probabilityRoll
+        self.cooldownWordCount = cooldownWordCount
     }
     
     public func start() {
@@ -1381,16 +1392,19 @@ public final class SmartInputService: @unchecked Sendable {
         inputText: String,
         bundleID: String? = nil
     ) -> SnippetExpansion? {
-        if isSnippetWordBoundary(inputText),
-           let snippet = textSnippet(for: bufferedToken, bundleID: bundleID),
-           snippet.requiresWordBoundary {
-            return SnippetExpansion(
-                snippet: snippet,
-                original: bufferedToken,
-                replacement: Self.renderedSnippetReplacement(snippet, original: bufferedToken),
-                replacingToken: bufferedToken,
-                boundary: inputText
-            )
+        if isSnippetWordBoundary(inputText), !bufferedToken.isEmpty {
+            if let snippet = textSnippet(for: bufferedToken, bundleID: bundleID),
+               snippet.requiresWordBoundary {
+                guard shouldApplySnippet(snippet) else { return nil }
+                return SnippetExpansion(
+                    snippet: snippet,
+                    original: bufferedToken,
+                    replacement: Self.renderedSnippetReplacement(snippet, original: bufferedToken),
+                    replacingToken: bufferedToken,
+                    boundary: inputText
+                )
+            }
+            noteCompletedWordForProbabilisticSnippetCooldown()
         }
 
         switch textSnippetExpansionMode {
@@ -1420,6 +1434,35 @@ public final class SmartInputService: @unchecked Sendable {
                 boundary: inputText
             )
         }
+    }
+
+    private func shouldApplySnippet(_ snippet: TextSnippet) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if snippet.replacementProbability >= 1 {
+            if probabilisticSnippetWordsRemaining > 0 {
+                probabilisticSnippetWordsRemaining -= 1
+            }
+            return true
+        }
+        if probabilisticSnippetWordsRemaining > 0 {
+            probabilisticSnippetWordsRemaining -= 1
+            return false
+        }
+        guard probabilityRoll() < snippet.replacementProbability else {
+            return false
+        }
+        probabilisticSnippetWordsRemaining = min(25, max(15, cooldownWordCount()))
+        return true
+    }
+
+    private func noteCompletedWordForProbabilisticSnippetCooldown() {
+        lock.lock()
+        if probabilisticSnippetWordsRemaining > 0 {
+            probabilisticSnippetWordsRemaining -= 1
+        }
+        lock.unlock()
     }
 
     func shouldBufferSnippetInput(_ token: String, bundleID: String? = nil) -> Bool {
