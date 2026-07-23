@@ -1278,6 +1278,84 @@ final class LayoutPilotCoreTests: XCTestCase {
         }
     }
 
+    func testBilingualConversionAcceptsUSKeysThatProduceRussianLetters() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+        let sourceLayoutID = "com.apple.keylayout.US"
+
+        let cases = [
+            ("vj;yj", "можно"),
+            ("[jhjij", "хорошо"),
+            ("'nj", "это"),
+            ("j,]trn", "объект"),
+            ("k.lb", "люди"),
+            ("`krf", "ёлка"),
+        ]
+
+        for (typed, expected) in cases {
+            XCTAssertEqual(
+                service.checkBilingualConversion(
+                    for: typed,
+                    sourceLayoutID: sourceLayoutID
+                )?.replacement,
+                expected,
+                typed
+            )
+        }
+
+        XCTAssertEqual(
+            service.checkBilingualConversion(
+                for: "ghbdtn,,,",
+                sourceLayoutID: sourceLayoutID
+            )?.replacement,
+            "привет,,,"
+        )
+        for englishWithPunctuation in ["hello,", "world.", "test;", "array["] {
+            XCTAssertNil(
+                service.checkBilingualConversion(
+                    for: englishWithPunctuation,
+                    sourceLayoutID: sourceLayoutID
+                ),
+                englishWithPunctuation
+            )
+        }
+    }
+
+    func testBilingualBufferDistinguishesRussianLetterKeysFromPunctuationKeys() {
+        let service = SmartInputService.shared
+        let sourceLayoutID = "com.apple.keylayout.US"
+
+        for character in [
+            "[", "]", ";", "'", ",", ".", "`",
+            "{", "}", ":", "\"", "<", ">", "~",
+        ] {
+            XCTAssertTrue(
+                service.shouldBufferBilingualInput(
+                    character,
+                    sourceLayoutID: sourceLayoutID
+                ),
+                character
+            )
+        }
+
+        for character in ["/", "?", "!", "-"] {
+            XCTAssertFalse(
+                service.shouldBufferBilingualInput(
+                    character,
+                    sourceLayoutID: sourceLayoutID
+                ),
+                character
+            )
+        }
+
+        XCTAssertFalse(service.shouldBufferBilingualInput(
+            ",",
+            sourceLayoutID: "com.apple.keylayout.RussianWin"
+        ))
+    }
+
     func testDoubleInitialUppercaseCorrectionForCurrentLayout() {
         let service = SmartInputService.shared
 

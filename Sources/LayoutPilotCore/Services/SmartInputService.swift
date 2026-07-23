@@ -901,6 +901,14 @@ public final class SmartInputService: @unchecked Sendable {
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
+
+        if smartBilingualEnabled,
+           isBilingualAllowed(for: activeBundleID),
+           let sourceID = currentInputSourceID(),
+           shouldBufferBilingualInput(text, sourceLayoutID: sourceID) {
+            appendToBuffer(text)
+            return Unmanaged.passUnretained(event)
+        }
         
         if shouldCommitBufferedWord(after: text) {
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
@@ -1599,6 +1607,18 @@ public final class SmartInputService: @unchecked Sendable {
         isBoundary(text)
     }
 
+    func shouldBufferBilingualInput(
+        _ text: String,
+        sourceLayoutID: String
+    ) -> Bool {
+        guard usInputSources.contains(sourceLayoutID),
+              text.count == 1,
+              let character = text.first else {
+            return false
+        }
+        return Self.usKeysProducingRussianLetters.contains(character)
+    }
+
     func resolveCommitToken(
         bufferedToken: String,
         focusedTextBeforeCaret: String?
@@ -1832,6 +1852,11 @@ public final class SmartInputService: @unchecked Sendable {
         "`": "ё", "~": "Ё",
     ]
 
+    private static let usKeysProducingRussianLetters = Set<Character>([
+        "[", "]", ";", "'", ",", ".", "`",
+        "{", "}", ":", "\"", "<", ">", "~",
+    ])
+
     private static let yukenToQwerty: [Character: Character] = {
         var map = [Character: Character]()
         for (k, v) in qwertyToYuken {
@@ -1897,6 +1922,10 @@ public final class SmartInputService: @unchecked Sendable {
         word.unicodeScalars.allSatisfy { scalar in
             (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
         }
+    }
+
+    private func isEnglishLayoutWordToken(_ token: String) -> Bool {
+        !token.isEmpty && isCyrillicWord(translateEnglishToRussian(token))
     }
 
     private func isCyrillicWord(_ word: String) -> Bool {
@@ -2017,6 +2046,50 @@ public final class SmartInputService: @unchecked Sendable {
         sourceLayoutID: String,
         contextWords: [String]
     ) -> BilingualResult? {
+        let exactCandidate = exactBilingualCandidate(
+            for: token,
+            sourceLayoutID: sourceLayoutID,
+            contextWords: contextWords
+        )
+        guard usInputSources.contains(sourceLayoutID),
+              token.last.map(Self.usKeysProducingRussianLetters.contains) == true else {
+            return exactCandidate
+        }
+
+        if let exactCandidate,
+           isValidRussianWord(exactCandidate.replacement) {
+            return exactCandidate
+        }
+
+        var core = token
+        var punctuationSuffix = ""
+        while let last = core.last,
+              Self.usKeysProducingRussianLetters.contains(last) {
+            core.removeLast()
+            punctuationSuffix.insert(last, at: punctuationSuffix.startIndex)
+            guard !core.isEmpty,
+                  let prefixCandidate = exactBilingualCandidate(
+                      for: core,
+                      sourceLayoutID: sourceLayoutID,
+                      contextWords: contextWords
+                  ),
+                  isValidRussianWord(prefixCandidate.replacement) else {
+                continue
+            }
+            return BilingualResult(
+                replacement: prefixCandidate.replacement + punctuationSuffix,
+                targetLayoutID: prefixCandidate.targetLayoutID
+            )
+        }
+
+        return exactCandidate
+    }
+
+    private func exactBilingualCandidate(
+        for token: String,
+        sourceLayoutID: String,
+        contextWords: [String]
+    ) -> BilingualResult? {
         let isUS = usInputSources.contains(sourceLayoutID)
         let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
                         sourceLayoutID.hasSuffix(".ru") ||
@@ -2034,8 +2107,8 @@ public final class SmartInputService: @unchecked Sendable {
 
         if token.count < 3 {
             if isUS {
-                guard isLatinWord(token) else { return nil }
-                if isValidEnglishWord(token) {
+                guard isEnglishLayoutWordToken(token) else { return nil }
+                if isLatinWord(token), isValidEnglishWord(token) {
                     return nil
                 }
                 let translated = translateEnglishToRussian(token)
@@ -2066,8 +2139,8 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         if isUS {
-            guard isLatinWord(token) else { return nil }
-            if isValidEnglishWord(token) {
+            guard isEnglishLayoutWordToken(token) else { return nil }
+            if isLatinWord(token), isValidEnglishWord(token) {
                 return nil
             }
             
