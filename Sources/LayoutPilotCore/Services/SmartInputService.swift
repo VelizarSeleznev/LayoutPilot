@@ -382,6 +382,7 @@ public final class SmartInputService: @unchecked Sendable {
     private var _textSnippetExpansionMode = TextSnippetExpansionMode.immediately
     private var _textSnippets: [TextSnippet] = []
     private var _textSnippetGroups: [TextSnippetGroup] = []
+    private var _remoteSnippetIDs: Set<UUID> = []
 
     public var textSnippetsEnabled: Bool {
         get {
@@ -424,6 +425,17 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _textSnippetGroups = newValue
+        }
+    }
+
+    public var remoteSnippetIDs: Set<UUID> {
+        get {
+            lock.lock(); defer { lock.unlock() }
+            return _remoteSnippetIDs
+        }
+        set {
+            lock.lock(); defer { lock.unlock() }
+            _remoteSnippetIDs = newValue
         }
     }
 
@@ -475,6 +487,7 @@ public final class SmartInputService: @unchecked Sendable {
         let bundleID: String?
         let originalLayoutID: String?
         let targetLayoutID: String?
+        let allowsBackspaceUndo: Bool
         var isActive: Bool
         var boundaryBackspaceConsumed: Bool
     }
@@ -488,6 +501,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     enum ReplacementBackspaceAction: Equatable {
+        case deleteNormally
         case deleteBoundary
         case undo(deleteBoundary: Bool)
     }
@@ -759,8 +773,11 @@ public final class SmartInputService: @unchecked Sendable {
                     switch Self.replacementBackspaceAction(
                         mode: last.mode,
                         boundary: last.boundary,
-                        boundaryBackspaceConsumed: last.boundaryBackspaceConsumed
+                        boundaryBackspaceConsumed: last.boundaryBackspaceConsumed,
+                        allowsBackspaceUndo: last.allowsBackspaceUndo
                     ) {
+                    case .deleteNormally:
+                        deactivateLastReplacement()
                     case .deleteBoundary:
                         markReplacementBoundaryBackspaceConsumed(last, elapsed: elapsed, keyCode: keyCode)
                         return Unmanaged.passUnretained(event)
@@ -873,7 +890,8 @@ public final class SmartInputService: @unchecked Sendable {
                 bundleID: activeBundleID,
                 originalLayoutID: currentInputSourceID(),
                 targetLayoutID: nil,
-                contextBefore: getContextHistoryWords()
+                contextBefore: getContextHistoryWords(),
+                allowsBackspaceUndo: shouldAllowBackspaceUndo(for: expansion.snippet)
             )
             editedWordTracker.noteCommittedBoundary(hadWord: true)
             return nil
@@ -1455,6 +1473,12 @@ public final class SmartInputService: @unchecked Sendable {
         probabilisticSnippetWordsSinceReplacement = 0
         probabilisticSnippetWordsRemaining = min(25, max(15, cooldownWordCount()))
         return true
+    }
+
+    func shouldAllowBackspaceUndo(for snippet: TextSnippet) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !_remoteSnippetIDs.contains(snippet.id)
     }
 
     private func noteCompletedWordForProbabilisticSnippetCooldown() {
@@ -2334,7 +2358,8 @@ public final class SmartInputService: @unchecked Sendable {
         bundleID: String?,
         originalLayoutID: String?,
         targetLayoutID: String?,
-        contextBefore: [String]
+        contextBefore: [String],
+        allowsBackspaceUndo: Bool = true
     ) {
         _lastReplacement = LastReplacementInfo(
             mode: mode,
@@ -2346,6 +2371,7 @@ public final class SmartInputService: @unchecked Sendable {
             bundleID: bundleID,
             originalLayoutID: originalLayoutID,
             targetLayoutID: targetLayoutID,
+            allowsBackspaceUndo: allowsBackspaceUndo,
             isActive: true,
             boundaryBackspaceConsumed: false
         )
@@ -2368,8 +2394,12 @@ public final class SmartInputService: @unchecked Sendable {
     static func replacementBackspaceAction(
         mode: String,
         boundary: String,
-        boundaryBackspaceConsumed: Bool
+        boundaryBackspaceConsumed: Bool,
+        allowsBackspaceUndo: Bool = true
     ) -> ReplacementBackspaceAction {
+        if !allowsBackspaceUndo {
+            return .deleteNormally
+        }
         if mode == "snippet" {
             return .undo(deleteBoundary: !boundary.isEmpty && !boundaryBackspaceConsumed)
         }

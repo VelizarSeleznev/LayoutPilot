@@ -1762,6 +1762,30 @@ final class LayoutPilotCoreTests: XCTestCase {
         )
     }
 
+    func testRemoteSnippetReplacementBackspaceDeletesNormallyInsteadOfUndoing() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL)
+        )
+        let remoteSnippet = TextSnippet(trigger: "бля", replacement: "б** (бля)")
+        let manualSnippet = TextSnippet(trigger: "brb", replacement: "be right back")
+        service.remoteSnippetIDs = [remoteSnippet.id]
+
+        XCTAssertFalse(service.shouldAllowBackspaceUndo(for: remoteSnippet))
+        XCTAssertTrue(service.shouldAllowBackspaceUndo(for: manualSnippet))
+        XCTAssertEqual(
+            SmartInputService.replacementBackspaceAction(
+                mode: "snippet",
+                boundary: " ",
+                boundaryBackspaceConsumed: false,
+                allowsBackspaceUndo: false
+            ),
+            .deleteNormally
+        )
+    }
+
     func testSnippetLookupRespectsApplicationScope() throws {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

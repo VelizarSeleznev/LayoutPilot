@@ -4,7 +4,7 @@ import OSLog
 
 @MainActor
 final class RemotePrankPackService {
-    private static let manifestURL = URL(string: "https://raw.githubusercontent.com/VelizarSeleznev/LayoutPilot/main/docs/remote/friend-prank.json")!
+    private static let manifestURL = URL(string: "https://raw.githubusercontent.com/VelizarSeleznev/LayoutPilot/main/Sources/LayoutPilotApp/Resources/friend-prank.json")!
     private static let checkInterval = Duration.seconds(15 * 60)
     private static let maxManifestBytes = 16 * 1024
 

@@ -38,8 +38,6 @@ targets:
     platform: macOS
     sources:
       - path: Sources/LayoutPilotApp
-      - path: docs/remote/friend-prank.json
-        buildPhase: resources
     dependencies:
       - target: LayoutPilotCore
       - package: Sparkle
@@ -78,7 +76,7 @@ targets:
     platform: macOS
     sources:
       - path: Tests
-      - path: docs/remote/friend-prank.json
+      - path: Sources/LayoutPilotApp/Resources/friend-prank.json
         buildPhase: resources
     dependencies:
       - target: LayoutPilotCore

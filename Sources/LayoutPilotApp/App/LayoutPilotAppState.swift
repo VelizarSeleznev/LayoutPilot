@@ -97,6 +97,7 @@ final class LayoutPilotAppState {
         SmartInputService.shared.textSnippetExpansionMode = configuration.textSnippetExpansionMode
         SmartInputService.shared.textSnippets = configuration.textSnippets
         SmartInputService.shared.textSnippetGroups = configuration.textSnippetGroups
+        SmartInputService.shared.remoteSnippetIDs = Set(configuration.remotePrankSnippetIDs)
         SmartInputService.shared.spellingAutocorrectEnabled = configuration.spellingAutocorrectEnabled
         let instantGlobeSwitchingEnabled =
             configuration.isModuleAdded(.layoutSwitching) && configuration.instantGlobeSwitchingEnabled
