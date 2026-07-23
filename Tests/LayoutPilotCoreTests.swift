@@ -1021,6 +1021,15 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertFalse(service.isDanishAllowed(for: "com.example.Other"))
     }
 
+    func testSpellingAutocorrectServiceStartsDisabled() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: tempURL))
+
+        XCTAssertFalse(service.spellingAutocorrectEnabled)
+    }
+
     func testSmartInputCommitsBufferedWordOnlyAfterBoundary() {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

@@ -178,7 +178,7 @@ public final class SmartInputService: @unchecked Sendable {
     public var onShowSuggestions: (@Sendable (SpellingSuggestionContext) -> Void)?
     public var onHideSuggestions: (@Sendable () -> Void)?
 
-    private var _spellingAutocorrectEnabled = true
+    private var _spellingAutocorrectEnabled = false
     public var spellingAutocorrectEnabled: Bool {
         get {
             lock.lock(); defer { lock.unlock() }
