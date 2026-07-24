@@ -323,10 +323,17 @@ public enum SmartInputLearningScope: String, Codable, CaseIterable, Hashable, Se
 
 public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
     public static let defaultSmartBilingualUndoDelay = 3.0
+    public static let defaultMenuBarModuleOrder: [FeatureModule] = [
+        .layoutSwitching,
+        .smartBilingual,
+        .smartDanish,
+        .snippets,
+    ]
 
     public var automationEnabled: Bool
     public var launchAtLogin: Bool
     public var showMenuBarItem: Bool
+    public var menuBarModuleOrder: [FeatureModule]
     public var instantGlobeSwitchingEnabled: Bool
     public var smartDanishInputEnabled: Bool
     public var smartDanishInputAllowedBundleIDs: [String]
@@ -362,6 +369,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         automationEnabled: Bool = true,
         launchAtLogin: Bool = false,
         showMenuBarItem: Bool = true,
+        menuBarModuleOrder: [FeatureModule] = Self.defaultMenuBarModuleOrder,
         instantGlobeSwitchingEnabled: Bool = false,
         smartDanishInputEnabled: Bool = true,
         smartDanishInputAllowedBundleIDs: [String] = [],
@@ -393,6 +401,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.automationEnabled = automationEnabled
         self.launchAtLogin = launchAtLogin
         self.showMenuBarItem = showMenuBarItem
+        self.menuBarModuleOrder = Self.normalizedMenuBarModuleOrder(menuBarModuleOrder)
         self.instantGlobeSwitchingEnabled = instantGlobeSwitchingEnabled
         self.smartDanishInputEnabled = smartDanishInputEnabled
         self.smartDanishInputAllowedBundleIDs = smartDanishInputAllowedBundleIDs
@@ -426,6 +435,7 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         case automationEnabled
         case launchAtLogin
         case showMenuBarItem
+        case menuBarModuleOrder
         case instantGlobeSwitchingEnabled
         case smartDanishInputEnabled
         case smartDanishInputAllowedBundleIDs
@@ -460,6 +470,10 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.automationEnabled = try container.decodeIfPresent(Bool.self, forKey: .automationEnabled) ?? true
         self.launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         self.showMenuBarItem = try container.decodeIfPresent(Bool.self, forKey: .showMenuBarItem) ?? true
+        self.menuBarModuleOrder = Self.normalizedMenuBarModuleOrder(
+            try container.decodeIfPresent([FeatureModule].self, forKey: .menuBarModuleOrder)
+                ?? Self.defaultMenuBarModuleOrder
+        )
         self.instantGlobeSwitchingEnabled = try container.decodeIfPresent(
             Bool.self,
             forKey: .instantGlobeSwitchingEnabled
@@ -495,6 +509,15 @@ public struct LayoutPilotConfiguration: Codable, Hashable, Sendable {
         self.remotePrankSnippetIDs = try container.decodeIfPresent([UUID].self, forKey: .remotePrankSnippetIDs) ?? []
         self.remotePrankAddedSnippetsModule = try container.decodeIfPresent(Bool.self, forKey: .remotePrankAddedSnippetsModule) ?? false
         self.anonymousUsageStatisticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .anonymousUsageStatisticsEnabled) ?? true
+    }
+
+    public static func normalizedMenuBarModuleOrder(_ order: [FeatureModule]) -> [FeatureModule] {
+        var seen = Set<FeatureModule>()
+        var normalized = order.filter { seen.insert($0).inserted }
+        for module in defaultMenuBarModuleOrder where seen.insert(module).inserted {
+            normalized.append(module)
+        }
+        return normalized
     }
 
     public static func `default`() -> LayoutPilotConfiguration {

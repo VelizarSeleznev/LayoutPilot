@@ -19,8 +19,13 @@ struct MenuBarView: View {
         appState.store.configuration.isModuleAdded(.snippets)
     }
 
+    private var activeMenuBarModules: [FeatureModule] {
+        let configuration = appState.store.configuration
+        return configuration.menuBarModuleOrder.filter(configuration.addedModules.contains)
+    }
+
     private var hasContextControls: Bool {
-        let modules = appState.store.configuration.addedModules
+        let modules = Set(activeMenuBarModules)
         return modules.contains(.layoutSwitching)
             || modules.contains(.smartDanish)
             || modules.contains(.smartBilingual)
@@ -30,20 +35,9 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 0) {
             masterHeader
 
-            if hasSnippetsModule {
-                Divider()
-                quickSnippetSection
-            }
-
             if hasContextControls, let application = activeApplication {
                 Divider()
-                applicationSection(application)
-
-                if appState.store.configuration.isModuleAdded(.layoutSwitching),
-                   let domain = appState.engine.activeWebsiteDomain {
-                    Divider()
-                    websiteSection(domain: domain)
-                }
+                applicationHeader(application)
             } else if hasContextControls {
                 Divider()
                 ContentUnavailableView(
@@ -53,6 +47,13 @@ struct MenuBarView: View {
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
+            }
+
+            ForEach(activeMenuBarModules) { module in
+                if module == .snippets || activeApplication != nil {
+                    Divider()
+                    menuBarModuleSection(module, application: activeApplication)
+                }
             }
 
             Divider()
@@ -182,37 +183,36 @@ struct MenuBarView: View {
         focusedQuickSnippetField = nil
     }
 
-    private func applicationSection(_ application: RecentApplicationContext) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 11) {
-                AppIconView(bundleID: application.bundleID, size: 36)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(application.applicationName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(contextStatusDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    @ViewBuilder
+    private func menuBarModuleSection(
+        _ module: FeatureModule,
+        application: RecentApplicationContext?
+    ) -> some View {
+        switch module {
+        case .snippets:
+            quickSnippetSection
+        case .layoutSwitching:
+            if let application {
+                VStack(alignment: .leading, spacing: 0) {
+                    pickerRow(
+                        title: "App Layout",
+                        systemImage: "keyboard",
+                        selection: Binding(
+                            get: { autoSwitchSelection(for: application) },
+                            set: { setAutoSwitchSelection($0, for: application) }
+                        ),
+                        includesLastUsed: true,
+                        inheritedTitle: "No Override"
+                    )
+
+                    if let domain = appState.engine.activeWebsiteDomain {
+                        Divider()
+                        websiteSection(domain: domain)
+                    }
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-
-            if appState.store.configuration.isModuleAdded(.layoutSwitching) {
-                pickerRow(
-                    title: "App Layout",
-                    systemImage: "keyboard",
-                    selection: Binding(
-                        get: { autoSwitchSelection(for: application) },
-                        set: { setAutoSwitchSelection($0, for: application) }
-                    ),
-                    includesLastUsed: true,
-                    inheritedTitle: "No Override"
-                )
-            }
-
-            if appState.store.configuration.isModuleAdded(.smartBilingual) {
+        case .smartBilingual:
+            if let application {
                 MenuToggleRow(
                     title: "Smart RU/EN",
                     symbol: "character.book.closed",
@@ -221,8 +221,8 @@ struct MenuBarView: View {
                     setSmartBilingualEnabled(!isSmartBilingualEnabled(for: application), for: application)
                 }
             }
-
-            if appState.store.configuration.isModuleAdded(.smartDanish) {
+        case .smartDanish:
+            if let application {
                 MenuToggleRow(
                     title: "Smart Danish",
                     symbol: "character.textbox",
@@ -232,7 +232,23 @@ struct MenuBarView: View {
                 }
             }
         }
-        .padding(.vertical, 6)
+    }
+
+    private func applicationHeader(_ application: RecentApplicationContext) -> some View {
+        HStack(spacing: 11) {
+            AppIconView(bundleID: application.bundleID, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(application.applicationName)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(contextStatusDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private var contextStatusDescription: String {

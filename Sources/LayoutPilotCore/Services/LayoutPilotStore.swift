@@ -198,6 +198,33 @@ public final class LayoutPilotStore {
         configuration = updated
     }
 
+    public func setMenuBarModuleOrder(_ order: [FeatureModule]) {
+        var updated = configuration
+        updated.menuBarModuleOrder = LayoutPilotConfiguration.normalizedMenuBarModuleOrder(order)
+        configuration = updated
+    }
+
+    public func moveMenuBarModule(_ module: FeatureModule, by offset: Int) {
+        var order = configuration.menuBarModuleOrder
+        guard let sourceIndex = order.firstIndex(of: module) else { return }
+        let destinationIndex = sourceIndex + offset
+        guard order.indices.contains(destinationIndex) else { return }
+        order.swapAt(sourceIndex, destinationIndex)
+        setMenuBarModuleOrder(order)
+    }
+
+    public func moveMenuBarModule(_ module: FeatureModule, to target: FeatureModule) {
+        var order = configuration.menuBarModuleOrder
+        guard let sourceIndex = order.firstIndex(of: module),
+              let targetIndex = order.firstIndex(of: target),
+              sourceIndex != targetIndex else {
+            return
+        }
+        order.remove(at: sourceIndex)
+        order.insert(module, at: min(targetIndex, order.endIndex))
+        setMenuBarModuleOrder(order)
+    }
+
     public func setInstantGlobeSwitchingEnabled(_ value: Bool) {
         var updated = configuration
         updated.instantGlobeSwitchingEnabled = value
@@ -515,6 +542,9 @@ public final class LayoutPilotStore {
 
     private static func normalizedConfiguration(_ configuration: LayoutPilotConfiguration) -> LayoutPilotConfiguration {
         var configuration = configuration
+        configuration.menuBarModuleOrder = LayoutPilotConfiguration.normalizedMenuBarModuleOrder(
+            configuration.menuBarModuleOrder
+        )
         if configuration.smartBilingualUndoDelay <= 0.5 {
             configuration.smartBilingualUndoDelay = LayoutPilotConfiguration.defaultSmartBilingualUndoDelay
         }

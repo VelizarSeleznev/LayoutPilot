@@ -277,12 +277,43 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(configuration.textSnippetExpansionMode, .immediately)
         XCTAssertFalse(configuration.spellingAutocorrectEnabled)
         XCTAssertEqual(configuration.addedModules, Set(FeatureModule.allCases))
+        XCTAssertEqual(
+            configuration.menuBarModuleOrder,
+            [.layoutSwitching, .smartBilingual, .smartDanish, .snippets]
+        )
         XCTAssertTrue(configuration.moduleSelectionCompleted)
         XCTAssertTrue(configuration.remotePrankPackEnabled)
         XCTAssertNil(configuration.appliedRemotePrankPackID)
         XCTAssertTrue(configuration.remotePrankSnippetIDs.isEmpty)
         XCTAssertFalse(configuration.remotePrankAddedSnippetsModule)
         XCTAssertTrue(configuration.anonymousUsageStatisticsEnabled)
+    }
+
+    func testStorePersistsAndMovesMenuBarModuleOrder() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        store.setMenuBarModuleOrder([.snippets])
+        XCTAssertEqual(
+            store.configuration.menuBarModuleOrder,
+            [.snippets, .layoutSwitching, .smartBilingual, .smartDanish]
+        )
+
+        store.moveMenuBarModule(.snippets, by: 1)
+        XCTAssertEqual(
+            store.configuration.menuBarModuleOrder,
+            [.layoutSwitching, .snippets, .smartBilingual, .smartDanish]
+        )
+
+        store.moveMenuBarModule(.snippets, to: .smartDanish)
+        XCTAssertEqual(
+            store.configuration.menuBarModuleOrder,
+            [.layoutSwitching, .smartBilingual, .smartDanish, .snippets]
+        )
+
+        let reloadedStore = LayoutPilotStore(fileURL: fileURL)
+        XCTAssertEqual(reloadedStore.configuration.menuBarModuleOrder, store.configuration.menuBarModuleOrder)
     }
 
     func testRemotePrankPackAppliedOnceWithGlobalScopeAndRollback() {

@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var appState: LayoutPilotAppState
     @ObservedObject private var updaterService = UpdaterService.shared
+    @State private var menuBarDropTarget: FeatureModule?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -23,6 +24,16 @@ struct SettingsView: View {
 
                     Button("Choose Modules…") {
                         appState.selectedSidebarSection = .overview
+                    }
+                }
+
+                Section("Menu Bar") {
+                    Text("Drag modules into the order you want. Modules you have not added keep their position for later.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(appState.store.configuration.menuBarModuleOrder) { module in
+                        menuBarModuleRow(module)
                     }
                 }
 
@@ -211,6 +222,74 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .onAppear {
             updaterService.refreshState()
+        }
+    }
+
+    private func menuBarModuleRow(_ module: FeatureModule) -> some View {
+        let order = appState.store.configuration.menuBarModuleOrder
+        let index = order.firstIndex(of: module) ?? 0
+        let isAdded = appState.store.configuration.isModuleAdded(module)
+
+        return HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+
+            Label(module.title, systemImage: module.systemImage)
+
+            Spacer()
+
+            if !isAdded {
+                Text("Not added")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                appState.store.moveMenuBarModule(module, by: -1)
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.borderless)
+            .disabled(index == order.startIndex)
+            .help("Move \(module.title) up")
+            .accessibilityLabel("Move \(module.title) up")
+
+            Button {
+                appState.store.moveMenuBarModule(module, by: 1)
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.borderless)
+            .disabled(index == order.index(before: order.endIndex))
+            .help("Move \(module.title) down")
+            .accessibilityLabel("Move \(module.title) down")
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(
+            menuBarDropTarget == module ? Color.accentColor.opacity(0.12) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6)
+        )
+        .contentShape(Rectangle())
+        .draggable(module.rawValue) {
+            Label(module.title, systemImage: module.systemImage)
+                .padding(8)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let rawValue = items.first,
+                  let draggedModule = FeatureModule(rawValue: rawValue) else {
+                return false
+            }
+            appState.store.moveMenuBarModule(draggedModule, to: module)
+            menuBarDropTarget = nil
+            return true
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                menuBarDropTarget = module
+            } else if menuBarDropTarget == module {
+                menuBarDropTarget = nil
+            }
         }
     }
 
