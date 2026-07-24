@@ -5,9 +5,18 @@ import SwiftUI
 struct MenuBarView: View {
     @Bindable var appState: LayoutPilotAppState
     @Environment(\.openWindow) private var openWindow
+    @State private var showsQuickSnippet = false
+    @State private var quickSnippetTrigger = ""
+    @State private var quickSnippetText = ""
+    @State private var quickSnippetError: String?
+    @FocusState private var focusedQuickSnippetField: QuickSnippetField?
 
     private var activeApplication: RecentApplicationContext? {
         appState.engine.lastExternalApplication
+    }
+
+    private var hasSnippetsModule: Bool {
+        appState.store.configuration.isModuleAdded(.snippets)
     }
 
     private var hasContextControls: Bool {
@@ -20,6 +29,11 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             masterHeader
+
+            if hasSnippetsModule {
+                Divider()
+                quickSnippetSection
+            }
 
             if hasContextControls, let application = activeApplication {
                 Divider()
@@ -46,6 +60,11 @@ struct MenuBarView: View {
         }
         .padding(.vertical, 8)
         .frame(width: 340)
+        .onChange(of: hasSnippetsModule) { _, isAdded in
+            if !isAdded {
+                closeQuickSnippet()
+            }
+        }
         .onAppear {
             appState.engine.refreshNow()
             appState.engine.refreshWebsiteNow()
@@ -69,6 +88,98 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var quickSnippetSection: some View {
+        if showsQuickSnippet {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    TextField("Trigger", text: $quickSnippetTrigger, prompt: Text(";sig"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption.monospaced())
+                        .frame(width: 82)
+                        .focused($focusedQuickSnippetField, equals: .trigger)
+                        .onSubmit {
+                            focusedQuickSnippetField = .replacement
+                        }
+
+                    TextField("Text", text: $quickSnippetText, prompt: Text("Replacement"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .focused($focusedQuickSnippetField, equals: .replacement)
+                        .onSubmit {
+                            addQuickSnippet()
+                        }
+
+                    Button(action: addQuickSnippet) {
+                        Image(systemName: "plus")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(!canAddQuickSnippet)
+                    .help("Add snippet")
+                    .accessibilityLabel("Add snippet")
+
+                    Button(action: closeQuickSnippet) {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .help("Cancel")
+                    .accessibilityLabel("Cancel adding snippet")
+                }
+
+                if let quickSnippetError {
+                    Text(quickSnippetError)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+        } else {
+            MenuActionRow(title: "Add Snippet", symbol: "text.badge.plus") {
+                showsQuickSnippet = true
+                quickSnippetError = nil
+                Task { @MainActor in
+                    await Task.yield()
+                    focusedQuickSnippetField = .trigger
+                }
+            }
+            .padding(6)
+        }
+    }
+
+    private var canAddQuickSnippet: Bool {
+        !quickSnippetTrigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !quickSnippetText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func addQuickSnippet() {
+        guard canAddQuickSnippet else { return }
+        let snippet = TextSnippet(
+            name: "",
+            trigger: quickSnippetTrigger,
+            replacement: quickSnippetText
+        )
+        switch appState.store.saveTextSnippet(snippet) {
+        case .success:
+            closeQuickSnippet()
+        case .failure(let error):
+            quickSnippetError = error.localizedDescription
+        }
+    }
+
+    private func closeQuickSnippet() {
+        showsQuickSnippet = false
+        quickSnippetTrigger = ""
+        quickSnippetText = ""
+        quickSnippetError = nil
+        focusedQuickSnippetField = nil
     }
 
     private func applicationSection(_ application: RecentApplicationContext) -> some View {
@@ -324,6 +435,11 @@ struct MenuBarView: View {
             appState.store.upsertWebsiteRule(WebsiteLayoutRule(domain: domain, profileID: profileID))
         }
     }
+}
+
+private enum QuickSnippetField: Hashable {
+    case trigger
+    case replacement
 }
 
 private struct MenuToggleRow: View {
