@@ -24,6 +24,12 @@ struct MenuBarView: View {
         return configuration.menuBarModuleOrder.filter(configuration.addedModules.contains)
     }
 
+    private var activeSmartMenuBarModules: [FeatureModule] {
+        activeMenuBarModules.filter { module in
+            module == .smartBilingual || module == .smartDanish
+        }
+    }
+
     private var hasContextControls: Bool {
         let modules = Set(activeMenuBarModules)
         return modules.contains(.layoutSwitching)
@@ -37,7 +43,7 @@ struct MenuBarView: View {
 
             if hasContextControls, let application = activeApplication {
                 Divider()
-                applicationHeader(application)
+                applicationSection(application)
             } else if hasContextControls {
                 Divider()
                 ContentUnavailableView(
@@ -49,11 +55,9 @@ struct MenuBarView: View {
                 .padding(.vertical, 18)
             }
 
-            ForEach(activeMenuBarModules) { module in
-                if module == .snippets || activeApplication != nil {
-                    Divider()
-                    menuBarModuleSection(module, application: activeApplication)
-                }
+            if hasSnippetsModule {
+                Divider()
+                quickSnippetSection
             }
 
             Divider()
@@ -143,7 +147,7 @@ struct MenuBarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
         } else {
-            MenuActionRow(title: "Add Snippet", symbol: "text.badge.plus") {
+            MenuActionRow(title: "Add Global Snippet", symbol: "text.badge.plus") {
                 showsQuickSnippet = true
                 quickSnippetError = nil
                 Task { @MainActor in
@@ -184,81 +188,84 @@ struct MenuBarView: View {
     }
 
     @ViewBuilder
-    private func menuBarModuleSection(
+    private func smartModuleRow(
         _ module: FeatureModule,
-        application: RecentApplicationContext?
+        application: RecentApplicationContext
     ) -> some View {
         switch module {
-        case .snippets:
-            quickSnippetSection
-        case .layoutSwitching:
-            if let application {
-                VStack(alignment: .leading, spacing: 0) {
-                    pickerRow(
-                        title: "App Layout",
-                        systemImage: "keyboard",
-                        selection: Binding(
+        case .smartBilingual:
+            MenuToggleRow(
+                title: "Smart RU/EN",
+                symbol: "character.book.closed",
+                isOn: isSmartBilingualEnabled(for: application)
+            ) {
+                setSmartBilingualEnabled(!isSmartBilingualEnabled(for: application), for: application)
+            }
+        case .smartDanish:
+            MenuToggleRow(
+                title: "Smart Danish",
+                symbol: "character.textbox",
+                isOn: isSmartDanishEnabled(for: application)
+            ) {
+                setSmartDanishEnabled(!isSmartDanishEnabled(for: application), for: application)
+            }
+        case .layoutSwitching, .snippets:
+            EmptyView()
+        }
+    }
+
+    private func applicationSection(_ application: RecentApplicationContext) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 11) {
+                AppIconView(bundleID: application.bundleID, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(application.applicationName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text("Controls for this app")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+
+                if appState.store.configuration.isModuleAdded(.layoutSwitching) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("Default layout")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Picker("Default layout for \(application.applicationName)", selection: Binding(
                             get: { autoSwitchSelection(for: application) },
                             set: { setAutoSwitchSelection($0, for: application) }
-                        ),
-                        includesLastUsed: true,
-                        inheritedTitle: "No Override"
-                    )
-
-                    if let domain = appState.engine.activeWebsiteDomain {
-                        Divider()
-                        websiteSection(domain: domain)
+                        )) {
+                            Text("No Override").tag("none")
+                            Text("Last Used").tag("lastUsed")
+                            Divider()
+                            ForEach(appState.store.configuration.profiles) { profile in
+                                Text(profile.name).tag("profile:\(profile.id.uuidString)")
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .frame(width: 118)
+                        .accessibilityLabel("Default layout for \(application.applicationName)")
                     }
                 }
             }
-        case .smartBilingual:
-            if let application {
-                MenuToggleRow(
-                    title: "Smart RU/EN",
-                    symbol: "character.book.closed",
-                    isOn: isSmartBilingualEnabled(for: application)
-                ) {
-                    setSmartBilingualEnabled(!isSmartBilingualEnabled(for: application), for: application)
-                }
-            }
-        case .smartDanish:
-            if let application {
-                MenuToggleRow(
-                    title: "Smart Danish",
-                    symbol: "character.textbox",
-                    isOn: isSmartDanishEnabled(for: application)
-                ) {
-                    setSmartDanishEnabled(!isSmartDanishEnabled(for: application), for: application)
-                }
-            }
-        }
-    }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
 
-    private func applicationHeader(_ application: RecentApplicationContext) -> some View {
-        HStack(spacing: 11) {
-            AppIconView(bundleID: application.bundleID, size: 36)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(application.applicationName)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(contextStatusDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if appState.store.configuration.isModuleAdded(.layoutSwitching),
+               let domain = appState.engine.activeWebsiteDomain {
+                websiteSection(domain: domain)
             }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
 
-    private var contextStatusDescription: String {
-        let configuration = appState.store.configuration
-        if configuration.isModuleAdded(.layoutSwitching) {
-            return configuration.automationEnabled ? "Automatic switching is on" : "Automatic switching is off"
+            ForEach(activeSmartMenuBarModules) { module in
+                smartModuleRow(module, application: application)
+            }
         }
-        let smartModuleCount = [FeatureModule.smartDanish, .smartBilingual]
-            .filter(configuration.addedModules.contains).count
-        return smartModuleCount == 1 ? "1 smart input module" : "\(smartModuleCount) smart input modules"
+        .padding(.bottom, 6)
     }
 
     private func websiteSection(domain: String) -> some View {

@@ -28,13 +28,17 @@ struct SettingsView: View {
                 }
 
                 Section("Menu Bar") {
-                    Text("Drag modules into the order you want. Modules you have not added keep their position for later.")
+                    Text("App layout stays in the active-app header. Snippets stay global. Reorder the smart controls between them.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    ForEach(appState.store.configuration.menuBarModuleOrder) { module in
-                        menuBarModuleRow(module)
+                    pinnedMenuBarModuleRow(.layoutSwitching, scope: "Active app header")
+
+                    ForEach(smartMenuBarModules) { module in
+                        smartMenuBarModuleRow(module)
                     }
+
+                    pinnedMenuBarModuleRow(.snippets, scope: "Global")
                 }
 
                 if appState.store.configuration.isModuleAdded(.layoutSwitching) {
@@ -225,9 +229,35 @@ struct SettingsView: View {
         }
     }
 
-    private func menuBarModuleRow(_ module: FeatureModule) -> some View {
-        let order = appState.store.configuration.menuBarModuleOrder
-        let index = order.firstIndex(of: module) ?? 0
+    private var smartMenuBarModules: [FeatureModule] {
+        appState.store.configuration.menuBarModuleOrder.filter { module in
+            module == .smartBilingual || module == .smartDanish
+        }
+    }
+
+    private func pinnedMenuBarModuleRow(_ module: FeatureModule, scope: String) -> some View {
+        let isAdded = appState.store.configuration.isModuleAdded(module)
+
+        return HStack(spacing: 10) {
+            Image(systemName: "pin.fill")
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+
+            Label(module.title, systemImage: module.systemImage)
+
+            Spacer()
+
+            Text(isAdded ? scope : "Not added")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+    }
+
+    private func smartMenuBarModuleRow(_ module: FeatureModule) -> some View {
+        let smartModules = smartMenuBarModules
+        let index = smartModules.firstIndex(of: module) ?? 0
         let isAdded = appState.store.configuration.isModuleAdded(module)
 
         return HStack(spacing: 10) {
@@ -246,22 +276,22 @@ struct SettingsView: View {
             }
 
             Button {
-                appState.store.moveMenuBarModule(module, by: -1)
+                moveSmartMenuBarModule(module, by: -1)
             } label: {
                 Image(systemName: "chevron.up")
             }
             .buttonStyle(.borderless)
-            .disabled(index == order.startIndex)
+            .disabled(index == smartModules.startIndex)
             .help("Move \(module.title) up")
             .accessibilityLabel("Move \(module.title) up")
 
             Button {
-                appState.store.moveMenuBarModule(module, by: 1)
+                moveSmartMenuBarModule(module, by: 1)
             } label: {
                 Image(systemName: "chevron.down")
             }
             .buttonStyle(.borderless)
-            .disabled(index == order.index(before: order.endIndex))
+            .disabled(index == smartModules.index(before: smartModules.endIndex))
             .help("Move \(module.title) down")
             .accessibilityLabel("Move \(module.title) down")
         }
@@ -278,10 +308,11 @@ struct SettingsView: View {
         }
         .dropDestination(for: String.self) { items, _ in
             guard let rawValue = items.first,
-                  let draggedModule = FeatureModule(rawValue: rawValue) else {
+                  let draggedModule = FeatureModule(rawValue: rawValue),
+                  smartModules.contains(draggedModule) else {
                 return false
             }
-            appState.store.moveMenuBarModule(draggedModule, to: module)
+            moveSmartMenuBarModule(draggedModule, to: module)
             menuBarDropTarget = nil
             return true
         } isTargeted: { isTargeted in
@@ -291,6 +322,34 @@ struct SettingsView: View {
                 menuBarDropTarget = nil
             }
         }
+    }
+
+    private func moveSmartMenuBarModule(_ module: FeatureModule, by offset: Int) {
+        let modules = smartMenuBarModules
+        guard let sourceIndex = modules.firstIndex(of: module) else { return }
+        let destinationIndex = sourceIndex + offset
+        guard modules.indices.contains(destinationIndex) else { return }
+
+        var reordered = modules
+        reordered.swapAt(sourceIndex, destinationIndex)
+        setSmartMenuBarModuleOrder(reordered)
+    }
+
+    private func moveSmartMenuBarModule(_ module: FeatureModule, to target: FeatureModule) {
+        var modules = smartMenuBarModules
+        guard let sourceIndex = modules.firstIndex(of: module),
+              let targetIndex = modules.firstIndex(of: target),
+              sourceIndex != targetIndex else {
+            return
+        }
+
+        let movedModule = modules.remove(at: sourceIndex)
+        modules.insert(movedModule, at: min(targetIndex, modules.endIndex))
+        setSmartMenuBarModuleOrder(modules)
+    }
+
+    private func setSmartMenuBarModuleOrder(_ modules: [FeatureModule]) {
+        appState.store.setMenuBarModuleOrder([.layoutSwitching] + modules + [.snippets])
     }
 
     private var remotePrankPackStatus: String {
