@@ -147,7 +147,7 @@ struct MenuBarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
         } else {
-            MenuActionRow(title: "Add Global Snippet", symbol: "text.badge.plus") {
+            MenuActionRow(title: "Add Snippet", symbol: "text.badge.plus", badge: "Global") {
                 showsQuickSnippet = true
                 quickSnippetError = nil
                 Task { @MainActor in
@@ -497,6 +497,7 @@ private struct MenuToggleRow: View {
 private struct MenuActionRow: View {
     let title: String
     let symbol: String
+    var badge: String?
     var shortcut: String?
     let action: () -> Void
 
@@ -508,6 +509,14 @@ private struct MenuActionRow: View {
                     .frame(width: 24)
                 Text(title)
                 Spacer()
+                if let badge {
+                    Text(badge)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                }
                 if let shortcut {
                     Text(shortcut)
                         .font(.caption)
