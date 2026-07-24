@@ -1976,6 +1976,19 @@ final class LayoutPilotCoreTests: XCTestCase {
         ))
     }
 
+    func testBrowserNewTabActivatesUSBeforeReturning() {
+        let inputSourceClient = FakeInputSourceClient(
+            currentSourceID: "com.apple.keylayout.RussianWin"
+        )
+
+        SmartInputService.activatePreferredUSInputSource(using: inputSourceClient)
+
+        XCTAssertEqual(
+            inputSourceClient.activatedSourceIDs,
+            ["com.apple.keylayout.US"]
+        )
+    }
+
     func testBrowserURLServiceDetection() {
         XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "com.apple.Safari"))
         XCTAssertTrue(BrowserURLService.isBrowser(bundleID: "com.google.Chrome"))
