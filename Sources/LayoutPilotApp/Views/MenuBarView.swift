@@ -229,7 +229,7 @@ struct MenuBarView: View {
                 Spacer(minLength: 8)
 
                 if appState.store.configuration.isModuleAdded(.layoutSwitching) {
-                    VStack(alignment: .trailing, spacing: 1) {
+                    VStack(alignment: .center, spacing: 1) {
                         Text("Default layout")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
