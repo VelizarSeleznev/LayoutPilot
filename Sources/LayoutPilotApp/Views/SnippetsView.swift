@@ -355,10 +355,13 @@ struct SnippetsView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 7) {
-                            Text("Name").font(.headline)
+                            Text("Name (optional)").font(.headline)
                             TextField("e.g. Work signature", text: $draft.name)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: .infinity)
+                            Text("Leave blank to use the trigger as the name.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
 
                         VStack(alignment: .leading, spacing: 7) {
@@ -627,11 +630,12 @@ private struct NewSnippetSheet: View {
                         .font(.callout)
                 }
 
-                TextField("Name", text: $draft.name, prompt: Text("Work signature"))
-                    .textFieldStyle(.roundedBorder)
-                TextField("Trigger", text: $draft.trigger, prompt: Text(";sig"))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Trigger").font(.headline)
+                    TextField("Trigger", text: $draft.trigger, prompt: Text(";sig"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.body.monospaced())
+                }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Text").font(.headline)
@@ -644,6 +648,15 @@ private struct NewSnippetSheet: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
                         }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name (optional)").font(.headline)
+                    TextField("Name", text: $draft.name, prompt: Text("Work signature"))
+                        .textFieldStyle(.roundedBorder)
+                    Text("Leave blank to use the trigger as the name.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 DisclosureGroup("Organization & Apps", isExpanded: $showsOptions) {
@@ -684,8 +697,7 @@ private struct NewSnippetSheet: View {
     }
 
     private var hasRequiredFields: Bool {
-        !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !draft.trigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.trigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !draft.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

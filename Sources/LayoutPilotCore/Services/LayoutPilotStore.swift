@@ -1,7 +1,6 @@
 import Foundation
 
 public enum TextSnippetValidationError: LocalizedError, Equatable {
-    case emptyName
     case emptyTrigger
     case emptyReplacement
     case duplicateTrigger(existingName: String)
@@ -9,8 +8,6 @@ public enum TextSnippetValidationError: LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .emptyName:
-            return "Enter a name for this snippet."
         case .emptyTrigger:
             return "Enter a trigger."
         case .emptyReplacement:
@@ -603,16 +600,16 @@ public final class LayoutPilotStore {
 
     private static func normalizedTextSnippet(_ snippet: TextSnippet) -> TextSnippet? {
         var normalized = snippet
-        normalized.name = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
         normalized.trigger = snippet.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
         if let scope = snippet.applicationScopeOverride {
             normalized.applicationScopeOverride = normalizedScope(scope)
         }
-        guard !normalized.name.isEmpty,
-              !normalized.trigger.isEmpty,
+        guard !normalized.trigger.isEmpty,
               !normalized.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
+        let trimmedName = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalized.name = trimmedName.isEmpty ? normalized.trigger : trimmedName
         return normalized
     }
 
@@ -621,17 +618,17 @@ public final class LayoutPilotStore {
         existing: [TextSnippet]
     ) -> Result<TextSnippet, TextSnippetValidationError> {
         var normalized = snippet
-        normalized.name = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
         normalized.trigger = snippet.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
         if let scope = snippet.applicationScopeOverride {
             normalized.applicationScopeOverride = normalizedScope(scope)
         }
 
-        guard !normalized.name.isEmpty else { return .failure(.emptyName) }
         guard !normalized.trigger.isEmpty else { return .failure(.emptyTrigger) }
         guard !normalized.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .failure(.emptyReplacement)
         }
+        let trimmedName = snippet.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalized.name = trimmedName.isEmpty ? normalized.trigger : trimmedName
         if let duplicate = existing.first(where: {
             $0.id != normalized.id && $0.trigger == normalized.trigger
         }) {

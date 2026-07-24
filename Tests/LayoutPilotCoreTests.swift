@@ -240,6 +240,25 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(store.configuration.textSnippets.first?.replacement, "first@example.com")
     }
 
+    func testStoreUsesTriggerAsNameWhenSnippetNameIsEmpty() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = tempDirectory.appendingPathComponent("configuration.json")
+        let store = LayoutPilotStore(fileURL: fileURL)
+
+        let result = store.saveTextSnippet(TextSnippet(
+            name: "  \n ",
+            trigger: " ;sig ",
+            replacement: "Best regards"
+        ))
+
+        guard case .success(let saved) = result else {
+            return XCTFail("Expected a snippet without a custom name to save")
+        }
+        XCTAssertEqual(saved.name, ";sig")
+        XCTAssertEqual(saved.trigger, ";sig")
+        XCTAssertEqual(store.configuration.textSnippets.first?.name, ";sig")
+    }
+
     func testTextSnippetDefaultsForExistingConfigurations() throws {
         let data = """
         {
