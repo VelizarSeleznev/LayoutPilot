@@ -103,6 +103,7 @@ final class LayoutPilotAppState {
             configuration.isModuleAdded(.layoutSwitching) && configuration.instantGlobeSwitchingEnabled
         _ = SystemGlobeKeyActionService.shared.setLayoutPilotControlEnabled(instantGlobeSwitchingEnabled)
         SmartInputService.shared.instantGlobeSwitchingEnabled = instantGlobeSwitchingEnabled
+        SmartInputService.shared.resetTransientInputState()
     }
 
     private static func configureRemoteUsageReporting(with configuration: LayoutPilotConfiguration) {

@@ -1863,14 +1863,22 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(expansion?.boundary, ".")
     }
 
-    func testSnippetReplacementUsesOneBackspaceUndo() {
+    func testSnippetReplacementDeletesBoundaryBeforeUndo() {
         XCTAssertEqual(
             SmartInputService.replacementBackspaceAction(
                 mode: "snippet",
                 boundary: " ",
                 boundaryBackspaceConsumed: false
             ),
-            .undo(deleteBoundary: true)
+            .deleteBoundary
+        )
+        XCTAssertEqual(
+            SmartInputService.replacementBackspaceAction(
+                mode: "snippet",
+                boundary: " ",
+                boundaryBackspaceConsumed: true
+            ),
+            .undo(deleteBoundary: false)
         )
         XCTAssertEqual(
             SmartInputService.replacementBackspaceAction(
@@ -1888,6 +1896,65 @@ final class LayoutPilotCoreTests: XCTestCase {
             ),
             .deleteBoundary
         )
+    }
+
+    func testImmediateSnippetUndoSurvivesOneTrailingBoundary() {
+        for boundary in [" ", ".", ",", "!", "?", "\"", "'"] {
+            XCTAssertEqual(
+                SmartInputService.replacementFollowUpAction(
+                    mode: "snippet",
+                    boundary: "",
+                    allowsBackspaceUndo: true,
+                    inputText: boundary
+                ),
+                .preserveAsBoundary,
+                boundary
+            )
+        }
+
+        XCTAssertEqual(
+            SmartInputService.replacementFollowUpAction(
+                mode: "snippet",
+                boundary: "",
+                allowsBackspaceUndo: true,
+                inputText: "a"
+            ),
+            .deactivate
+        )
+        XCTAssertEqual(
+            SmartInputService.replacementFollowUpAction(
+                mode: "snippet",
+                boundary: " ",
+                allowsBackspaceUndo: true,
+                inputText: "."
+            ),
+            .deactivate
+        )
+        XCTAssertEqual(
+            SmartInputService.replacementFollowUpAction(
+                mode: "snippet",
+                boundary: "",
+                allowsBackspaceUndo: false,
+                inputText: " "
+            ),
+            .deactivate
+        )
+    }
+
+    func testResetTransientInputStateDropsBufferedDanishTrigger() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: storeURL)
+        )
+
+        service.appendToBuffer("'")
+        XCTAssertEqual(service.getBufferToken(), "'")
+
+        service.resetTransientInputState()
+
+        XCTAssertEqual(service.getBufferToken(), "")
     }
 
     func testRemoteSnippetReplacementBackspaceDeletesNormallyInsteadOfUndoing() {

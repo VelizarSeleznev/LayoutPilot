@@ -231,12 +231,12 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     // MARK: - Thread-safe wrappers
-    private func getBufferToken() -> String {
+    func getBufferToken() -> String {
         lock.lock(); defer { lock.unlock() }
         return buffer.token
     }
     
-    private func appendToBuffer(_ text: String) {
+    func appendToBuffer(_ text: String) {
         lock.lock(); defer { lock.unlock() }
         buffer.append(text)
     }
@@ -298,6 +298,21 @@ public final class SmartInputService: @unchecked Sendable {
     private func setDeferredShortTokenConversion(_ conversion: DeferredShortTokenConversion?) {
         lock.lock(); defer { lock.unlock() }
         _deferredShortTokenConversion = conversion
+    }
+
+    public func resetTransientInputState() {
+        lock.lock()
+        buffer.reset()
+        editedWordTracker.reset()
+        contextHistory.reset()
+        _deferredShortTokenConversion = nil
+        _lastReplacement = nil
+        _suggestionsActive = false
+        _activeSuggestions = []
+        _activeSelectCallback = nil
+        lock.unlock()
+
+        onHideSuggestions?()
     }
 
     private var _allowedBundleIDs = Set<String>()
@@ -482,7 +497,7 @@ public final class SmartInputService: @unchecked Sendable {
         let reason: String
         let original: String
         let replacement: String
-        let boundary: String
+        var boundary: String
         var timestamp: Date
         let bundleID: String?
         let originalLayoutID: String?
@@ -504,6 +519,11 @@ public final class SmartInputService: @unchecked Sendable {
         case deleteNormally
         case deleteBoundary
         case undo(deleteBoundary: Bool)
+    }
+
+    enum ReplacementFollowUpAction: Equatable {
+        case deactivate
+        case preserveAsBoundary
     }
 
     struct ContextualPhraseConversion {
@@ -834,8 +854,6 @@ public final class SmartInputService: @unchecked Sendable {
             editedWordTracker.reset()
             setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
-        } else {
-            deactivateLastReplacement()
         }
 
         guard isEnabled || smartBilingualEnabled || textSnippetsEnabled else {
@@ -843,6 +861,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetContextHistory()
             editedWordTracker.reset()
             setDeferredShortTokenConversion(nil)
+            deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
         }
         
@@ -851,6 +870,7 @@ public final class SmartInputService: @unchecked Sendable {
             resetContextHistory()
             editedWordTracker.reset()
             setDeferredShortTokenConversion(nil)
+            deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
         }
         
@@ -859,11 +879,27 @@ public final class SmartInputService: @unchecked Sendable {
             resetContextHistory()
             editedWordTracker.reset()
             setDeferredShortTokenConversion(nil)
+            deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
         }
         
         guard let text = eventText(event), text.count == 1 else {
+            deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
+        }
+
+        if let last = getLastReplacement(), last.isActive {
+            switch Self.replacementFollowUpAction(
+                mode: last.mode,
+                boundary: last.boundary,
+                allowsBackspaceUndo: last.allowsBackspaceUndo,
+                inputText: text
+            ) {
+            case .deactivate:
+                deactivateLastReplacement()
+            case .preserveAsBoundary:
+                preserveReplacementUndo(last, withBoundary: text)
+            }
         }
 
         let snippetsAllowed = isTextSnippetsAllowed(for: activeBundleID)
@@ -2440,7 +2476,7 @@ public final class SmartInputService: @unchecked Sendable {
         contextBefore: [String],
         allowsBackspaceUndo: Bool = true
     ) {
-        _lastReplacement = LastReplacementInfo(
+        setLastReplacement(LastReplacementInfo(
             mode: mode,
             reason: reason,
             original: original,
@@ -2453,7 +2489,7 @@ public final class SmartInputService: @unchecked Sendable {
             allowsBackspaceUndo: allowsBackspaceUndo,
             isActive: true,
             boundaryBackspaceConsumed: false
-        )
+        ))
 
         SmartInputEventLog.shared.record(.init(
             kind: "replacement",
@@ -2480,12 +2516,45 @@ public final class SmartInputService: @unchecked Sendable {
             return .deleteNormally
         }
         if mode == "snippet" {
-            return .undo(deleteBoundary: !boundary.isEmpty && !boundaryBackspaceConsumed)
+            if !boundary.isEmpty, !boundaryBackspaceConsumed {
+                return .deleteBoundary
+            }
+            return .undo(deleteBoundary: false)
         }
         if !boundary.isEmpty, !boundaryBackspaceConsumed {
             return .deleteBoundary
         }
         return .undo(deleteBoundary: !boundaryBackspaceConsumed)
+    }
+
+    static func replacementFollowUpAction(
+        mode: String,
+        boundary: String,
+        allowsBackspaceUndo: Bool,
+        inputText: String
+    ) -> ReplacementFollowUpAction {
+        guard mode == "snippet",
+              allowsBackspaceUndo,
+              boundary.isEmpty,
+              inputText.count == 1,
+              inputText.unicodeScalars.allSatisfy({
+                  !CharacterSet.letters.contains($0) &&
+                      !CharacterSet.decimalDigits.contains($0)
+              }) else {
+            return .deactivate
+        }
+        return .preserveAsBoundary
+    }
+
+    private func preserveReplacementUndo(
+        _ last: LastReplacementInfo,
+        withBoundary boundary: String
+    ) {
+        var updated = last
+        updated.boundary = boundary
+        updated.timestamp = Date()
+        updated.boundaryBackspaceConsumed = false
+        setLastReplacement(updated)
     }
 
     private func markReplacementBoundaryBackspaceConsumed(
@@ -2496,7 +2565,7 @@ public final class SmartInputService: @unchecked Sendable {
         var updated = last
         updated.boundaryBackspaceConsumed = true
         updated.timestamp = Date()
-        _lastReplacement = updated
+        setLastReplacement(updated)
 
         SmartInputEventLog.shared.record(.init(
             kind: "replacement_boundary_backspace",
