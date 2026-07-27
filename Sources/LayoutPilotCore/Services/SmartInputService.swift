@@ -42,13 +42,13 @@ public final class SmartInputService: @unchecked Sendable {
     
     private let commonRussianShortWords: Set<String> = [
         "а", "в", "и", "к", "о", "с", "у", "я",
-        "бы", "во", "вы", "да", "до", "ее", "её", "же", "за", "из", "им", "их", "ли", "мы", "на", "не", "но", "он", "от", "по", "со", "та", "те", "то", "ту", "ты",
+        "бы", "во", "вы", "да", "до", "ее", "её", "же", "за", "из", "им", "их", "ли", "мы", "на", "не", "ни", "но", "ну", "ок", "ой", "он", "от", "по", "со", "та", "те", "то", "ту", "ты",
         "об", "уж", "ей", "ею", "ко"
     ]
 
     private let commonEnglishShortWords: Set<String> = [
         "a", "i",
-        "am", "an", "as", "at", "be", "by", "do", "go", "he", "if", "in", "is", "it", "me", "my", "no", "of", "on", "or", "so", "to", "up", "us", "we",
+        "am", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if", "in", "is", "it", "me", "my", "no", "of", "ok", "on", "or", "so", "to", "up", "us", "we",
         "ah", "oh"
     ]
 

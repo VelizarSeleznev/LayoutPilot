@@ -63,6 +63,56 @@ final class ContextualShortWordTests: XCTestCase {
         }
     }
 
+    func testCommonTwoLetterRussianTokensUseFollowingWordContext() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+
+        let cases = [
+            (original: "Ye", following: "lkbyyfz", followingReplacement: "длинная", expected: "Ну длинная"),
+            (original: "Yb", following: "rfr", followingReplacement: "как", expected: "Ни как"),
+            (original: "Jr", following: "rfr", followingReplacement: "как", expected: "Ок как"),
+            (original: "Jq", following: "rfr", followingReplacement: "как", expected: "Ой как"),
+        ]
+
+        for item in cases {
+            let conversion = service.contextualPhraseConversion(
+                precedingToken: item.original,
+                separator: " ",
+                precedingSourceLayoutID: "com.apple.keylayout.US",
+                followingOriginal: item.following,
+                followingReplacement: item.followingReplacement,
+                followingTargetLayoutID: "com.apple.keylayout.RussianWin"
+            )
+            XCTAssertEqual(conversion?.replacement, item.expected, "failed to recover \(item.original)")
+        }
+    }
+
+    func testCommonTwoLetterEnglishTokensUseFollowingWordContext() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+
+        let cases = [
+            (original: "щл", expected: "ok world"),
+            (original: "рш", expected: "hi world"),
+        ]
+
+        for item in cases {
+            let conversion = service.contextualPhraseConversion(
+                precedingToken: item.original,
+                separator: " ",
+                precedingSourceLayoutID: "com.apple.keylayout.RussianWin",
+                followingOriginal: "цщкдв",
+                followingReplacement: "world",
+                followingTargetLayoutID: "com.apple.keylayout.US"
+            )
+            XCTAssertEqual(conversion?.replacement, item.expected, "failed to recover \(item.original)")
+        }
+    }
+
     func testSingleLetterIsNotRewrittenWithoutMatchingFollowingLanguage() throws {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
