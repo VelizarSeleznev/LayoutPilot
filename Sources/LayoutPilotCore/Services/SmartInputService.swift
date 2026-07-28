@@ -24,6 +24,15 @@ public final class SmartInputService: @unchecked Sendable {
     private let instantInputSourceCycler = InstantInputSourceCycler()
     private let usInputSources = Set(["com.apple.keylayout.US", "com.apple.keylayout.ABC"])
     private let danishLanguage = "da"
+
+    /// Godot/Summer game windows poll held keys every frame. Their key-down events
+    /// must never wait for Accessibility, the main queue, or snippet matching.
+    /// Both editors use the same bundle identifier for editor and game processes,
+    /// so favor responsive gameplay and leave Smart Input disabled in the editors.
+    static let realtimeInputBundleIDs: Set<String> = [
+        "org.godotengine.godot",
+        "org.summerengine.editor",
+    ]
     
     private let excludedBundleIDs = TextSnippetPolicy.securityExcludedBundleIDs
     
@@ -745,6 +754,15 @@ public final class SmartInputService: @unchecked Sendable {
             }
         }
 
+        if Self.shouldBypassSmartInput(for: activeBundleID) {
+            resetBuffer()
+            resetContextHistory()
+            editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
+            deactivateLastReplacement()
+            return Unmanaged.passUnretained(event)
+        }
+
         // Intercept suggestions keys when panel is active
         if isSuggestionsActive {
             if keyCode == 53 { // Escape
@@ -1349,6 +1367,10 @@ public final class SmartInputService: @unchecked Sendable {
 
     private func shouldForceUSForBrowserNewTab(keyCode: Int64, flags: CGEventFlags, bundleID: String) -> Bool {
         Self.shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: bundleID)
+    }
+
+    static func shouldBypassSmartInput(for bundleID: String) -> Bool {
+        realtimeInputBundleIDs.contains(bundleID)
     }
 
     private func activatePreferredUSInputSource() {
