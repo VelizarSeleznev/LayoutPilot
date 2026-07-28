@@ -753,6 +753,18 @@ final class LayoutPilotCoreTests: XCTestCase {
         ))
     }
 
+    func testRealtimeGameRuntimesBypassSmartInput() {
+        XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
+            for: "org.summerengine.editor"
+        ))
+        XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
+            for: "org.godotengine.godot"
+        ))
+        XCTAssertFalse(SmartInputService.shouldBypassSmartInput(
+            for: "com.apple.TextEdit"
+        ))
+    }
+
     func testRemoteSnippetHandlingCanEnterSecurityExcludedApplications() {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
