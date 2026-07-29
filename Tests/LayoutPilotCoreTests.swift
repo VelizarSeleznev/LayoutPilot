@@ -1888,13 +1888,16 @@ final class LayoutPilotCoreTests: XCTestCase {
             ),
             .undo(deleteBoundary: false)
         )
+    }
+
+    func testBilingualReplacementUsesOneBackspaceUndo() {
         XCTAssertEqual(
             SmartInputService.replacementBackspaceAction(
                 mode: "bilingual",
                 boundary: " ",
                 boundaryBackspaceConsumed: false
             ),
-            .deleteBoundary
+            .undo(deleteBoundary: true)
         )
     }
 

@@ -2521,10 +2521,7 @@ public final class SmartInputService: @unchecked Sendable {
             }
             return .undo(deleteBoundary: false)
         }
-        if !boundary.isEmpty, !boundaryBackspaceConsumed {
-            return .deleteBoundary
-        }
-        return .undo(deleteBoundary: !boundaryBackspaceConsumed)
+        return .undo(deleteBoundary: !boundary.isEmpty && !boundaryBackspaceConsumed)
     }
 
     static func replacementFollowUpAction(
