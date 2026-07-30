@@ -682,13 +682,36 @@ final class LayoutPilotCoreTests: XCTestCase {
     func testSnippetExpansionModeAndExplicitAutocorrectPreferencePersist() throws {
         var configuration = LayoutPilotConfiguration.default()
         configuration.textSnippetExpansionMode = .afterSpace
+        configuration.textSnippets = [
+            TextSnippet(
+                trigger: "rn",
+                replacement: "right now",
+                expansionModeOverride: .immediately
+            )
+        ]
         configuration.spellingAutocorrectEnabled = true
 
         let data = try JSONEncoder().encode(configuration)
         let decoded = try JSONDecoder().decode(LayoutPilotConfiguration.self, from: data)
 
         XCTAssertEqual(decoded.textSnippetExpansionMode, .afterSpace)
+        XCTAssertEqual(decoded.textSnippets.first?.expansionModeOverride, .immediately)
         XCTAssertTrue(decoded.spellingAutocorrectEnabled)
+    }
+
+    func testLegacySnippetWithoutExpansionOverrideUsesGlobalMode() throws {
+        let data = Data("""
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "name": "rn",
+          "trigger": "rn",
+          "replacement": "right now"
+        }
+        """.utf8)
+
+        let snippet = try JSONDecoder().decode(TextSnippet.self, from: data)
+
+        XCTAssertNil(snippet.expansionModeOverride)
     }
 
     func testNewConfigurationStartsWithModuleChooser() {
@@ -1679,6 +1702,47 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(expansion?.original, "brb.")
         XCTAssertEqual(expansion?.replacingToken, "brb.")
         XCTAssertEqual(expansion?.boundary, " ")
+    }
+
+    func testSnippetCanWaitForSpaceWhileGlobalModeIsImmediate() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippetExpansionMode = .immediately
+        service.textSnippets = [
+            TextSnippet(
+                trigger: "rn",
+                replacement: "right now",
+                expansionModeOverride: .afterSpace
+            )
+        ]
+
+        XCTAssertNil(service.snippetExpansion(bufferedToken: "r", inputText: "n"))
+        XCTAssertTrue(service.shouldBufferSnippetInput("rn"))
+
+        let expansion = service.snippetExpansion(bufferedToken: "rn", inputText: " ")
+        XCTAssertEqual(expansion?.replacement, "right now")
+        XCTAssertEqual(expansion?.boundary, " ")
+    }
+
+    func testSnippetCanExpandImmediatelyWhileGlobalModeWaitsForSpace() {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
+        service.textSnippetExpansionMode = .afterSpace
+        service.textSnippets = [
+            TextSnippet(
+                trigger: ";rn",
+                replacement: "right now",
+                expansionModeOverride: .immediately
+            )
+        ]
+
+        let expansion = service.snippetExpansion(bufferedToken: ";r", inputText: "n")
+        XCTAssertEqual(expansion?.replacement, "right now")
+        XCTAssertEqual(expansion?.boundary, "")
     }
 
     func testRemoteSnippetExpansionPreservesRussianAndEnglishTypedCaseAtBoundary() {

@@ -203,6 +203,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
     public var requiresWordBoundary: Bool
     public var allowsInRestrictedApplications: Bool
     public var replacementProbability: Double
+    public var expansionModeOverride: TextSnippetExpansionMode?
     public var groupID: UUID?
     public var applicationScopeOverride: SnippetApplicationScope?
 
@@ -217,6 +218,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         requiresWordBoundary: Bool = false,
         allowsInRestrictedApplications: Bool = false,
         replacementProbability: Double = 1,
+        expansionModeOverride: TextSnippetExpansionMode? = nil,
         groupID: UUID? = nil,
         applicationScopeOverride: SnippetApplicationScope? = nil
     ) {
@@ -230,6 +232,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         self.requiresWordBoundary = requiresWordBoundary
         self.allowsInRestrictedApplications = allowsInRestrictedApplications
         self.replacementProbability = replacementProbability
+        self.expansionModeOverride = expansionModeOverride
         self.groupID = groupID
         self.applicationScopeOverride = applicationScopeOverride
     }
@@ -245,6 +248,7 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
         case requiresWordBoundary
         case allowsInRestrictedApplications
         case replacementProbability
+        case expansionModeOverride
         case groupID
         case applicationScopeOverride
     }
@@ -267,6 +271,10 @@ public struct TextSnippet: Identifiable, Codable, Hashable, Sendable {
             Double.self,
             forKey: .replacementProbability
         ) ?? 1
+        self.expansionModeOverride = try container.decodeIfPresent(
+            TextSnippetExpansionMode.self,
+            forKey: .expansionModeOverride
+        )
         self.groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         self.applicationScopeOverride = try container.decodeIfPresent(
             SnippetApplicationScope.self,

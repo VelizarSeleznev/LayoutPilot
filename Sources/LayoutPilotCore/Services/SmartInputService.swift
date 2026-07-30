@@ -883,15 +883,6 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         
-        guard shouldHandleCurrentContext() else {
-            resetBuffer()
-            resetContextHistory()
-            editedWordTracker.reset()
-            setDeferredShortTokenConversion(nil)
-            deactivateLastReplacement()
-            return Unmanaged.passUnretained(event)
-        }
-        
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
             resetBuffer()
             resetContextHistory()
@@ -902,6 +893,15 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         guard let text = eventText(event), text.count == 1 else {
+            deactivateLastReplacement()
+            return Unmanaged.passUnretained(event)
+        }
+
+        guard shouldHandleCurrentContext(bundleID: activeBundleID) else {
+            resetBuffer()
+            resetContextHistory()
+            editedWordTracker.reset()
+            setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
         }
@@ -1416,37 +1416,25 @@ public final class SmartInputService: @unchecked Sendable {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     }
     
-    private func shouldHandleCurrentContext() -> Bool {
-        guard let bundleID = frontmostBundleID() else {
-            return false
-        }
-        if AXFocusInspector.focusedElementIsSecureTextField() {
-            return false
-        }
-
+    private func shouldHandleCurrentContext(bundleID: String) -> Bool {
+        let hasEligibleFeature: Bool
         if isTextSnippetsAllowed(for: bundleID) {
-            return true
+            hasEligibleFeature = true
+        } else {
+            guard !excludedBundleIDs.contains(bundleID),
+                  isDanishAllowed(for: bundleID) || isBilingualAllowed(for: bundleID),
+                  let sourceID = currentInputSourceID() else {
+                return false
+            }
+
+            let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") ||
+                            sourceID.hasSuffix(".ru") ||
+                            sourceID.contains(".ru.") ||
+                            sourceID == "ru"
+            hasEligibleFeature = usInputSources.contains(sourceID) || isRussian
         }
 
-        if excludedBundleIDs.contains(bundleID) {
-            return false
-        }
-
-        guard let sourceID = currentInputSourceID() else {
-            return false
-        }
-
-        let isRussian = sourceID.localizedCaseInsensitiveContains("Russian") ||
-                        sourceID.hasSuffix(".ru") ||
-                        sourceID.contains(".ru.") ||
-                        sourceID == "ru"
-        let isUS = usInputSources.contains(sourceID)
-
-        guard isUS || isRussian else {
-            return false
-        }
-
-        return isDanishAllowed(for: bundleID) || isBilingualAllowed(for: bundleID)
+        return hasEligibleFeature && !AXFocusInspector.focusedElementIsSecureTextField()
     }
 
     /// Smart Danish input applies when globally allowed for all apps, or this app is allow-listed.
@@ -1498,25 +1486,23 @@ public final class SmartInputService: @unchecked Sendable {
             noteCompletedWordForProbabilisticSnippetCooldown()
         }
 
-        switch textSnippetExpansionMode {
-        case .immediately:
-            let original = bufferedToken + inputText
-            guard let snippet = textSnippet(for: original, bundleID: bundleID),
-                  !snippet.requiresWordBoundary else {
-                return nil
-            }
+        let immediateOriginal = bufferedToken + inputText
+        if let snippet = textSnippet(for: immediateOriginal, bundleID: bundleID),
+           !snippet.requiresWordBoundary,
+           effectiveExpansionMode(for: snippet) == .immediately {
             return SnippetExpansion(
                 snippet: snippet,
-                original: original,
-                replacement: Self.renderedSnippetReplacement(snippet, original: original),
+                original: immediateOriginal,
+                replacement: Self.renderedSnippetReplacement(snippet, original: immediateOriginal),
                 replacingToken: bufferedToken,
                 boundary: ""
             )
-        case .afterSpace:
-            guard inputText == " ",
-                  let snippet = textSnippet(for: bufferedToken, bundleID: bundleID) else {
-                return nil
-            }
+        }
+
+        if inputText == " ",
+           let snippet = textSnippet(for: bufferedToken, bundleID: bundleID),
+           !snippet.requiresWordBoundary,
+           effectiveExpansionMode(for: snippet) == .afterSpace {
             return SnippetExpansion(
                 snippet: snippet,
                 original: bufferedToken,
@@ -1525,6 +1511,8 @@ public final class SmartInputService: @unchecked Sendable {
                 boundary: inputText
             )
         }
+
+        return nil
     }
 
     private func shouldApplySnippet(_ snippet: TextSnippet) -> Bool {
@@ -1579,8 +1567,14 @@ public final class SmartInputService: @unchecked Sendable {
            snippet.requiresWordBoundary {
             return true
         }
-        return textSnippetExpansionMode == .afterSpace
-            && textSnippet(for: token, bundleID: bundleID) != nil
+        guard let snippet = textSnippet(for: token, bundleID: bundleID) else {
+            return false
+        }
+        return effectiveExpansionMode(for: snippet) == .afterSpace
+    }
+
+    func effectiveExpansionMode(for snippet: TextSnippet) -> TextSnippetExpansionMode {
+        snippet.expansionModeOverride ?? textSnippetExpansionMode
     }
 
     func isSnippetTriggerContinuation(_ token: String, bundleID: String? = nil) -> Bool {

@@ -3,6 +3,9 @@ import ApplicationServices
 import Foundation
 
 public enum BrowserURLService {
+    private static let appleScriptCache = NSCache<NSString, NSAppleScript>()
+    private static let appleScriptExecutionLock = NSLock()
+
     public static func domain(from urlString: String) -> String? {
         guard let url = URL(string: urlString),
               let scheme = url.scheme?.lowercased(),
@@ -52,7 +55,18 @@ public enum BrowserURLService {
             return nil
         }
         
-        guard let script = NSAppleScript(source: scriptSource) else { return nil }
+        appleScriptExecutionLock.lock()
+        defer { appleScriptExecutionLock.unlock() }
+
+        let cacheKey = bundleID as NSString
+        let script: NSAppleScript
+        if let cached = appleScriptCache.object(forKey: cacheKey) {
+            script = cached
+        } else {
+            guard let compiled = NSAppleScript(source: scriptSource) else { return nil }
+            appleScriptCache.setObject(compiled, forKey: cacheKey)
+            script = compiled
+        }
         var errorInfo: NSDictionary?
         let result = script.executeAndReturnError(&errorInfo)
         if errorInfo != nil {

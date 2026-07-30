@@ -372,6 +372,11 @@ struct SnippetsView: View {
                                 .frame(maxWidth: .infinity)
                         }
 
+                        SnippetExpansionModeEditor(
+                            expansionModeOverride: $draft.expansionModeOverride,
+                            globalMode: configuration.textSnippetExpansionMode
+                        )
+
                         VStack(alignment: .leading, spacing: 7) {
                             Text("Text").font(.headline)
                             TextEditor(text: $draft.replacement)
@@ -650,6 +655,11 @@ private struct NewSnippetSheet: View {
                         }
                 }
 
+                SnippetExpansionModeEditor(
+                    expansionModeOverride: $draft.expansionModeOverride,
+                    globalMode: store.configuration.textSnippetExpansionMode
+                )
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Name (optional)").font(.headline)
                     TextField("Name", text: $draft.name, prompt: Text("Work signature"))
@@ -708,6 +718,49 @@ private struct NewSnippetSheet: View {
             dismiss()
         case .failure(let error):
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SnippetExpansionModeEditor: View {
+    @Binding var expansionModeOverride: TextSnippetExpansionMode?
+    let globalMode: TextSnippetExpansionMode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Expand").font(.headline)
+            Picker("Expand", selection: $expansionModeOverride) {
+                Text("Use Global (\(globalMode.title))")
+                    .tag(Optional<TextSnippetExpansionMode>.none)
+                Text(TextSnippetExpansionMode.immediately.title)
+                    .tag(Optional(TextSnippetExpansionMode.immediately))
+                Text(TextSnippetExpansionMode.afterSpace.title)
+                    .tag(Optional(TextSnippetExpansionMode.afterSpace))
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+
+            Text(expansionModeDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var expansionModeDescription: String {
+        switch expansionModeOverride ?? globalMode {
+        case .immediately:
+            return "Replace as soon as the final trigger character is typed."
+        case .afterSpace:
+            return "Replace only when Space is pressed after the complete trigger."
+        }
+    }
+}
+
+private extension TextSnippetExpansionMode {
+    var title: String {
+        switch self {
+        case .immediately: return "Immediately"
+        case .afterSpace: return "After Space"
         }
     }
 }
