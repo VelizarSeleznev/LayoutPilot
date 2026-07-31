@@ -572,6 +572,7 @@ public final class SmartInputService: @unchecked Sendable {
     private var focusObserverApplication: AXUIElement?
     private var workspaceNotificationTokens: [NSObjectProtocol] = []
     private var defaultNotificationTokens: [NSObjectProtocol] = []
+    private var distributedNotificationTokens: [NSObjectProtocol] = []
     
     public init() {
         self.learningStore = .shared
@@ -600,6 +601,28 @@ public final class SmartInputService: @unchecked Sendable {
         defaultNotificationTokens.append(
             NotificationCenter.default.addObserver(
                 forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.performLayoutCaching()
+            }
+        )
+        distributedNotificationTokens.append(
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(
+                    rawValue: kTISNotifySelectedKeyboardInputSourceChanged as String
+                ),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshCurrentInputSource()
+            }
+        )
+        distributedNotificationTokens.append(
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(
+                    rawValue: kTISNotifyEnabledKeyboardInputSourcesChanged as String
+                ),
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
@@ -661,6 +684,14 @@ public final class SmartInputService: @unchecked Sendable {
         lock.lock()
         _cachedEnglishLayoutID = english
         _cachedRussianLayoutID = russian
+        _inputContext.inputSourceID = currentSourceID
+        lock.unlock()
+    }
+
+    private func refreshCurrentInputSource() {
+        precondition(Thread.isMainThread)
+        let currentSourceID = currentInputSourceIDOnMainThread()
+        lock.lock()
         _inputContext.inputSourceID = currentSourceID
         lock.unlock()
     }
@@ -1512,11 +1543,11 @@ public final class SmartInputService: @unchecked Sendable {
         focusedElementKind: AXFocusedElementKind
     ) -> Bool {
         switch focusedElementKind {
-        case .unknown, .secureText:
+        case .secureText:
             return true
         case .text:
             return false
-        case .nonText:
+        case .unknown, .nonText:
             return realtimeInputBundleIDs.contains(bundleID)
         }
     }

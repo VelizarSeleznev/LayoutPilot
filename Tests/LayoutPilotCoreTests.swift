@@ -813,7 +813,7 @@ final class LayoutPilotCoreTests: XCTestCase {
             for: "com.apple.TextEdit",
             focusedElementKind: .secureText
         ))
-        XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
+        XCTAssertFalse(SmartInputService.shouldBypassSmartInput(
             for: "com.apple.TextEdit",
             focusedElementKind: .unknown
         ))
