@@ -1,6 +1,13 @@
 import AppKit
 import ApplicationServices
 
+public enum AXFocusedElementKind: Sendable, Equatable {
+    case unknown
+    case secureText
+    case text
+    case nonText
+}
+
 /// A read-only snapshot of whatever text element currently has keyboard focus,
 /// system-wide. Captures both the content/context (value + cursor) and a set of
 /// capability flags so you can see, per app, what Accessibility actually exposes.
@@ -35,6 +42,38 @@ public struct AXFocusSnapshot: Sendable {
 
 @MainActor
 public enum AXFocusInspector {
+    /// Classifies focus for the cached input context. This may perform IPC, so it
+    /// belongs on the context-monitor queue and never in the Event Tap callback.
+    nonisolated public static func focusedElementKind(expectedPID: pid_t? = nil) -> AXFocusedElementKind {
+        guard AXIsProcessTrusted() else { return .unknown }
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedRef
+        ) == .success,
+        let focusedRef,
+        CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else {
+            return .unknown
+        }
+
+        let element = focusedRef as! AXUIElement
+        if let expectedPID {
+            var actualPID: pid_t = 0
+            guard AXUIElementGetPid(element, &actualPID) == .success,
+                  actualPID == expectedPID else {
+                return .unknown
+            }
+        }
+
+        return elementKind(
+            role: copyString(element, kAXRoleAttribute),
+            subrole: copyString(element, kAXSubroleAttribute)
+        )
+    }
+
     /// Prevents snippets and layout correction from rewriting password input while
     /// allowing globally scoped snippets in every non-secure text field.
     nonisolated public static func focusedElementIsSecureTextField() -> Bool {
@@ -262,6 +301,24 @@ public enum AXFocusInspector {
 
     nonisolated static func isSecureTextField(role: String?, subrole: String?) -> Bool {
         role == "AXSecureTextField" || subrole == "AXSecureTextField"
+    }
+
+    nonisolated static func elementKind(role: String?, subrole: String?) -> AXFocusedElementKind {
+        guard role != nil || subrole != nil else { return .unknown }
+        if isSecureTextField(role: role, subrole: subrole) {
+            return .secureText
+        }
+
+        let textRoles: Set<String> = [
+            "AXTextField",
+            "AXTextArea",
+            "AXSearchField",
+            "AXComboBox",
+        ]
+        if role.map(textRoles.contains) == true || subrole.map(textRoles.contains) == true {
+            return .text
+        }
+        return .nonText
     }
 
     public static func getCaretRect() -> CGRect? {

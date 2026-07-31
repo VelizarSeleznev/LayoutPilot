@@ -25,14 +25,20 @@ public final class SmartInputService: @unchecked Sendable {
     private let usInputSources = Set(["com.apple.keylayout.US", "com.apple.keylayout.ABC"])
     private let danishLanguage = "da"
 
-    /// Godot/Summer game windows poll held keys every frame. Their key-down events
-    /// must never wait for Accessibility, the main queue, or snippet matching.
-    /// Both editors use the same bundle identifier for editor and game processes,
-    /// so favor responsive gameplay and leave Smart Input disabled in the editors.
+    /// Godot/Summer game windows poll held keys every frame. Their non-text
+    /// key-down events bypass Smart Input, while cached AX focus lets editor text
+    /// fields keep snippets and RU/EN correction without blocking the tap thread.
     static let realtimeInputBundleIDs: Set<String> = [
         "org.godotengine.godot",
         "org.summerengine.editor",
     ]
+
+    struct InputContextSnapshot: Sendable, Equatable {
+        var bundleID = ""
+        var processIdentifier: pid_t?
+        var inputSourceID: String?
+        var focusedElementKind: AXFocusedElementKind = .unknown
+    }
     
     private let excludedBundleIDs = TextSnippetPolicy.securityExcludedBundleIDs
     
@@ -478,6 +484,7 @@ public final class SmartInputService: @unchecked Sendable {
 
     private var _cachedEnglishLayoutID: String?
     private var _cachedRussianLayoutID: String?
+    private var _inputContext = InputContextSnapshot()
 
     private var cachedEnglishLayoutID: String? {
         get {
@@ -557,6 +564,14 @@ public final class SmartInputService: @unchecked Sendable {
     
     private var eventTap: CFMachPort?
     private var isStarted = false
+    private let focusInspectionQueue = DispatchQueue(
+        label: "com.velizard.LayoutPilot.input-context",
+        qos: .userInitiated
+    )
+    private var focusObserver: AXObserver?
+    private var focusObserverApplication: AXUIElement?
+    private var workspaceNotificationTokens: [NSObjectProtocol] = []
+    private var defaultNotificationTokens: [NSObjectProtocol] = []
     
     public init() {
         self.learningStore = .shared
@@ -581,13 +596,35 @@ public final class SmartInputService: @unchecked Sendable {
         requestAccessibilityPermissionIfNeeded()
         cacheLayouts()
         learningStore.bootstrapFromEventLogIfNeeded()
-        
-        NotificationCenter.default.addObserver(
-            forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.cacheLayouts()
+
+        defaultNotificationTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSTextInputContext.keyboardSelectionDidChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.performLayoutCaching()
+            }
+        )
+        workspaceNotificationTokens.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication
+                self?.refreshApplicationContext(
+                    application ?? NSWorkspace.shared.frontmostApplication
+                )
+            }
+        )
+        if Thread.isMainThread {
+            refreshApplicationContext(NSWorkspace.shared.frontmostApplication)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.refreshApplicationContext(NSWorkspace.shared.frontmostApplication)
+            }
         }
         
         Thread.detachNewThread { [weak self] in
@@ -620,8 +657,107 @@ public final class SmartInputService: @unchecked Sendable {
                    !id.contains("characterpalette") && !id.contains("ink")
         }?.sourceID ?? "com.apple.keylayout.RussianWin"
         
-        self.cachedEnglishLayoutID = english
-        self.cachedRussianLayoutID = russian
+        let currentSourceID = currentInputSourceIDOnMainThread()
+        lock.lock()
+        _cachedEnglishLayoutID = english
+        _cachedRussianLayoutID = russian
+        _inputContext.inputSourceID = currentSourceID
+        lock.unlock()
+    }
+
+    private func inputContextSnapshot() -> InputContextSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        return _inputContext
+    }
+
+    private func refreshApplicationContext(_ application: NSRunningApplication?) {
+        precondition(Thread.isMainThread)
+        let bundleID = application?.bundleIdentifier ?? ""
+        let processIdentifier = application?.processIdentifier
+
+        lock.lock()
+        _inputContext.bundleID = bundleID
+        _inputContext.processIdentifier = processIdentifier
+        _inputContext.focusedElementKind = .unknown
+        lock.unlock()
+
+        installFocusObserver(for: application)
+        scheduleFocusedElementRefresh(expectedPID: processIdentifier)
+    }
+
+    private func installFocusObserver(for application: NSRunningApplication?) {
+        precondition(Thread.isMainThread)
+        if let focusObserver {
+            CFRunLoopRemoveSource(
+                CFRunLoopGetMain(),
+                AXObserverGetRunLoopSource(focusObserver),
+                .commonModes
+            )
+        }
+        focusObserver = nil
+        focusObserverApplication = nil
+
+        guard let application else { return }
+        let callback: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            let service = Unmanaged<SmartInputService>
+                .fromOpaque(refcon)
+                .takeUnretainedValue()
+            let expectedPID = service.inputContextSnapshot().processIdentifier
+            service.invalidateFocusedElement(expectedPID: expectedPID)
+            service.scheduleFocusedElementRefresh(expectedPID: expectedPID)
+        }
+        var observer: AXObserver?
+        guard AXObserverCreate(application.processIdentifier, callback, &observer) == .success,
+              let observer else {
+            return
+        }
+
+        let appElement = AXUIElementCreateApplication(application.processIdentifier)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let focusResult = AXObserverAddNotification(
+            observer,
+            appElement,
+            kAXFocusedUIElementChangedNotification as CFString,
+            refcon
+        )
+        let windowResult = AXObserverAddNotification(
+            observer,
+            appElement,
+            kAXFocusedWindowChangedNotification as CFString,
+            refcon
+        )
+        guard focusResult == .success || windowResult == .success else { return }
+
+        focusObserver = observer
+        focusObserverApplication = appElement
+        CFRunLoopAddSource(
+            CFRunLoopGetMain(),
+            AXObserverGetRunLoopSource(observer),
+            .commonModes
+        )
+    }
+
+    private func invalidateFocusedElement(expectedPID: pid_t?) {
+        guard let expectedPID else { return }
+        lock.lock()
+        if _inputContext.processIdentifier == expectedPID {
+            _inputContext.focusedElementKind = .unknown
+        }
+        lock.unlock()
+    }
+
+    private func scheduleFocusedElementRefresh(expectedPID: pid_t?) {
+        guard let expectedPID else { return }
+        focusInspectionQueue.async { [weak self] in
+            guard let self else { return }
+            let kind = AXFocusInspector.focusedElementKind(expectedPID: expectedPID)
+            self.lock.lock()
+            if self._inputContext.processIdentifier == expectedPID {
+                self._inputContext.focusedElementKind = kind
+            }
+            self.lock.unlock()
+        }
     }
     
     private func runEventLoop() {
@@ -714,6 +850,8 @@ public final class SmartInputService: @unchecked Sendable {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+        let inputContext = inputContextSnapshot()
+        let activeBundleID = inputContext.bundleID
 
         if shouldForceUSForSpotlight(keyCode: keyCode, flags: flags) {
             activatePreferredUSInputSource()
@@ -729,7 +867,6 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
-        let activeBundleID = frontmostBundleID() ?? ""
         if shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: activeBundleID) {
             activatePreferredUSInputSource()
             resetBuffer()
@@ -754,7 +891,10 @@ public final class SmartInputService: @unchecked Sendable {
             }
         }
 
-        if Self.shouldBypassSmartInput(for: activeBundleID) {
+        if Self.shouldBypassSmartInput(
+            for: activeBundleID,
+            focusedElementKind: inputContext.focusedElementKind
+        ) {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
@@ -857,8 +997,8 @@ public final class SmartInputService: @unchecked Sendable {
                 SmartInputEventLog.shared.record(.init(
                     kind: "backspace_buffer_update",
                     reason: "removed last buffered character",
-                    bundleID: frontmostBundleID(),
-                    sourceLayoutID: currentInputSourceID(),
+                    bundleID: activeBundleID,
+                    sourceLayoutID: inputContext.inputSourceID,
                     keyCode: keyCode,
                     bufferBefore: bufferBefore,
                     bufferAfter: bufferAfter
@@ -897,7 +1037,7 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
-        guard shouldHandleCurrentContext(bundleID: activeBundleID) else {
+        guard shouldHandleCurrentContext(inputContext) else {
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
@@ -942,7 +1082,7 @@ public final class SmartInputService: @unchecked Sendable {
                 replacement: expansion.replacement,
                 boundary: expansion.boundary,
                 bundleID: activeBundleID,
-                originalLayoutID: currentInputSourceID(),
+                originalLayoutID: inputContext.inputSourceID,
                 targetLayoutID: nil,
                 contextBefore: getContextHistoryWords(),
                 allowsBackspaceUndo: shouldAllowBackspaceUndo(for: expansion.snippet)
@@ -958,7 +1098,7 @@ public final class SmartInputService: @unchecked Sendable {
 
         if smartBilingualEnabled,
            isBilingualAllowed(for: activeBundleID),
-           let sourceID = currentInputSourceID(),
+           let sourceID = inputContext.inputSourceID,
            shouldBufferBilingualInput(text, sourceLayoutID: sourceID) {
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
@@ -967,13 +1107,13 @@ public final class SmartInputService: @unchecked Sendable {
         if shouldCommitBufferedWord(after: text) {
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
             let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
-            let sourceID = currentInputSourceID()
+            let sourceID = inputContext.inputSourceID
             let wasEditingExistingWord = editedWordTracker.isEditingExistingWord
             let tokenResolution: CommitTokenResolution
             if wasEditingExistingWord {
                 tokenResolution = resolveCommitToken(
                     bufferedToken: bufferToken,
-                    focusedTextBeforeCaret: AXFocusInspector.focusedTextBeforeCaret()
+                    focusedTextBeforeCaret: nil
                 )
             } else {
                 tokenResolution = CommitTokenResolution(
@@ -990,11 +1130,6 @@ public final class SmartInputService: @unchecked Sendable {
                 : getDeferredShortTokenConversion()
             let deferredShortToken: DeferredShortTokenConversion? = storedDeferredShortToken.flatMap { candidate in
                 guard candidate.bundleID == nil || candidate.bundleID == activeBundleID else {
-                    return nil
-                }
-                let expectedSuffix = candidate.original + candidate.separator + originalToken
-                if let focusedText = AXFocusInspector.focusedTextBeforeCaret(),
-                   !focusedText.hasSuffix(expectedSuffix) {
                     return nil
                 }
                 return candidate
@@ -1037,8 +1172,11 @@ public final class SmartInputService: @unchecked Sendable {
             else if !suppressFragmentConversion,
                     smartBilingualEnabled,
                     isBilingualAllowed,
+                    let sourceID,
                     let bilingualResult = checkBilingualConversion(
                         for: originalToken,
+                        sourceLayoutID: sourceID,
+                        contextWords: getContextHistoryWords(),
                         bundleID: activeBundleID,
                         logSuppression: true
                     ) {
@@ -1369,8 +1507,18 @@ public final class SmartInputService: @unchecked Sendable {
         Self.shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: bundleID)
     }
 
-    static func shouldBypassSmartInput(for bundleID: String) -> Bool {
-        realtimeInputBundleIDs.contains(bundleID)
+    static func shouldBypassSmartInput(
+        for bundleID: String,
+        focusedElementKind: AXFocusedElementKind
+    ) -> Bool {
+        switch focusedElementKind {
+        case .unknown, .secureText:
+            return true
+        case .text:
+            return false
+        case .nonText:
+            return realtimeInputBundleIDs.contains(bundleID)
+        }
     }
 
     private func activatePreferredUSInputSource() {
@@ -1412,18 +1560,22 @@ public final class SmartInputService: @unchecked Sendable {
         return Unmanaged<CFString>.fromOpaque(rawID).takeUnretainedValue() as String
     }
     
-    private func frontmostBundleID() -> String? {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-    }
-    
-    private func shouldHandleCurrentContext(bundleID: String) -> Bool {
+    private func shouldHandleCurrentContext(_ context: InputContextSnapshot) -> Bool {
+        let bundleID = context.bundleID
+        guard !Self.shouldBypassSmartInput(
+            for: bundleID,
+            focusedElementKind: context.focusedElementKind
+        ) else {
+            return false
+        }
+
         let hasEligibleFeature: Bool
         if isTextSnippetsAllowed(for: bundleID) {
             hasEligibleFeature = true
         } else {
             guard !excludedBundleIDs.contains(bundleID),
                   isDanishAllowed(for: bundleID) || isBilingualAllowed(for: bundleID),
-                  let sourceID = currentInputSourceID() else {
+                  let sourceID = context.inputSourceID else {
                 return false
             }
 
@@ -1434,7 +1586,7 @@ public final class SmartInputService: @unchecked Sendable {
             hasEligibleFeature = usInputSources.contains(sourceID) || isRussian
         }
 
-        return hasEligibleFeature && !AXFocusInspector.focusedElementIsSecureTextField()
+        return hasEligibleFeature
     }
 
     /// Smart Danish input applies when globally allowed for all apps, or this app is allow-listed.

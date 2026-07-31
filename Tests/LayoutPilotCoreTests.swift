@@ -774,17 +774,48 @@ final class LayoutPilotCoreTests: XCTestCase {
             role: "AXTextField",
             subrole: nil
         ))
+        XCTAssertEqual(
+            AXFocusInspector.elementKind(role: "AXTextField", subrole: nil),
+            .text
+        )
+        XCTAssertEqual(
+            AXFocusInspector.elementKind(role: "AXSecureTextField", subrole: nil),
+            .secureText
+        )
+        XCTAssertEqual(
+            AXFocusInspector.elementKind(role: "AXButton", subrole: nil),
+            .nonText
+        )
+        XCTAssertEqual(
+            AXFocusInspector.elementKind(role: nil, subrole: nil),
+            .unknown
+        )
     }
 
-    func testRealtimeGameRuntimesBypassSmartInput() {
+    func testRealtimeGameRuntimesOnlyBypassSmartInputOutsideTextFields() {
         XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
-            for: "org.summerengine.editor"
+            for: "org.summerengine.editor",
+            focusedElementKind: .nonText
         ))
         XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
-            for: "org.godotengine.godot"
+            for: "org.godotengine.godot",
+            focusedElementKind: .nonText
         ))
         XCTAssertFalse(SmartInputService.shouldBypassSmartInput(
-            for: "com.apple.TextEdit"
+            for: "org.summerengine.editor",
+            focusedElementKind: .text
+        ))
+        XCTAssertFalse(SmartInputService.shouldBypassSmartInput(
+            for: "com.apple.TextEdit",
+            focusedElementKind: .nonText
+        ))
+        XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
+            for: "com.apple.TextEdit",
+            focusedElementKind: .secureText
+        ))
+        XCTAssertTrue(SmartInputService.shouldBypassSmartInput(
+            for: "com.apple.TextEdit",
+            focusedElementKind: .unknown
         ))
     }
 
