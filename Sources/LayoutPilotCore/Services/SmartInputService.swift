@@ -327,6 +327,7 @@ public final class SmartInputService: @unchecked Sendable {
         _activeSelectCallback = nil
         lock.unlock()
 
+        recordTraceState("transient_input_state_reset")
         onHideSuggestions?()
     }
 
@@ -593,6 +594,7 @@ public final class SmartInputService: @unchecked Sendable {
     public func start() {
         guard !isStarted else { return }
         isStarted = true
+        recordTraceState("smart_input_service_start")
         
         requestAccessibilityPermissionIfNeeded()
         cacheLayouts()
@@ -681,19 +683,37 @@ public final class SmartInputService: @unchecked Sendable {
         }?.sourceID ?? "com.apple.keylayout.RussianWin"
         
         let currentSourceID = currentInputSourceIDOnMainThread()
+        let previous = inputContextSnapshot()
         lock.lock()
         _cachedEnglishLayoutID = english
         _cachedRussianLayoutID = russian
         _inputContext.inputSourceID = currentSourceID
         lock.unlock()
+        recordTraceState(
+            "layout_cache_refresh",
+            details: [
+                "previousSource": previous.inputSourceID ?? "nil",
+                "currentSource": currentSourceID ?? "nil",
+                "englishSource": english,
+                "russianSource": russian,
+            ]
+        )
     }
 
     private func refreshCurrentInputSource() {
         precondition(Thread.isMainThread)
         let currentSourceID = currentInputSourceIDOnMainThread()
+        let previousSourceID = inputContextSnapshot().inputSourceID
         lock.lock()
         _inputContext.inputSourceID = currentSourceID
         lock.unlock()
+        recordTraceState(
+            "selected_input_source_notification",
+            details: [
+                "previousSource": previousSourceID ?? "nil",
+                "currentSource": currentSourceID ?? "nil",
+            ]
+        )
     }
 
     private func inputContextSnapshot() -> InputContextSnapshot {
@@ -705,12 +725,25 @@ public final class SmartInputService: @unchecked Sendable {
         precondition(Thread.isMainThread)
         let bundleID = application?.bundleIdentifier ?? ""
         let processIdentifier = application?.processIdentifier
+        let previous = inputContextSnapshot()
 
         lock.lock()
         _inputContext.bundleID = bundleID
         _inputContext.processIdentifier = processIdentifier
         _inputContext.focusedElementKind = .unknown
         lock.unlock()
+        if previous.bundleID != bundleID || previous.processIdentifier != processIdentifier {
+            resetTransientInputState()
+        }
+        recordTraceState(
+            "frontmost_application_changed",
+            details: [
+                "previousBundleID": previous.bundleID,
+                "currentBundleID": bundleID,
+                "previousPID": previous.processIdentifier.map(String.init) ?? "nil",
+                "currentPID": processIdentifier.map(String.init) ?? "nil",
+            ]
+        )
 
         installFocusObserver(for: application)
         scheduleFocusedElementRefresh(expectedPID: processIdentifier)
@@ -788,6 +821,13 @@ public final class SmartInputService: @unchecked Sendable {
                 self._inputContext.focusedElementKind = kind
             }
             self.lock.unlock()
+            self.recordTraceState(
+                "focused_element_classified",
+                details: [
+                    "expectedPID": String(expectedPID),
+                    "focusKind": self.traceFocusKindName(kind),
+                ]
+            )
         }
     }
     
@@ -844,6 +884,7 @@ public final class SmartInputService: @unchecked Sendable {
 
             CGEvent.tapEnable(tap: tap, enable: true)
             logger.info("Smart input event tap started")
+            recordTraceState("event_tap_started")
             
             CFRunLoopRun()
 
@@ -861,21 +902,92 @@ public final class SmartInputService: @unchecked Sendable {
     }
     
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        let traceStarted = DispatchTime.now().uptimeNanoseconds
+        let traceSequence = SmartInputTraceLog.shared.nextSequence()
+        let traceContext = inputContextSnapshot()
+        let traceKeyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let traceRawText = type == .keyDown ? eventText(event) : nil
+        let traceCapturesText = shouldCaptureTraceText(in: traceContext)
+        let traceCapturesKeyIdentity = shouldCaptureTraceKeyIdentity(in: traceContext)
+        let traceLastReplacement = getLastReplacement().flatMap { replacement in
+            replacement.bundleID == nil || replacement.bundleID == traceContext.bundleID
+                ? replacement
+                : nil
+        }
+        var traceDecision = "pass_through"
+        var traceDisposition = "passed"
+
+        SmartInputTraceLog.shared.record(.init(
+            sequence: traceSequence,
+            phase: "event_received",
+            eventType: traceEventTypeName(type),
+            keyCode: traceCapturesKeyIdentity ? traceKeyCode : nil,
+            text: traceCapturesText ? traceRawText : nil,
+            textRedacted: traceRawText == nil ? nil : !traceCapturesText,
+            flagsRaw: event.flags.rawValue,
+            flags: traceFlagNames(event.flags),
+            isAutoRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+            isSynthetic: event.getIntegerValueField(.eventSourceUserData) == magicEventTag,
+            sourcePID: event.getIntegerValueField(.eventSourceUnixProcessID),
+            bundleID: traceContext.bundleID,
+            processIdentifier: traceContext.processIdentifier,
+            cachedSourceLayoutID: traceContext.inputSourceID,
+            observedSourceLayoutID: traceRawText.flatMap {
+                resolvedSourceLayoutID(for: $0, fallback: traceContext.inputSourceID)
+            },
+            focusedElementKind: traceFocusKindName(traceContext.focusedElementKind),
+            bufferBefore: traceCapturesText ? getBufferToken() : nil,
+            lastReplacementMode: traceLastReplacement?.mode,
+            lastReplacementOriginal: traceCapturesText ? traceLastReplacement?.original : nil,
+            lastReplacementText: traceCapturesText ? traceLastReplacement?.replacement : nil,
+            lastReplacementBoundary: traceCapturesText ? traceLastReplacement?.boundary : nil,
+            details: [
+                "smartDanishEnabled": String(isEnabled),
+                "smartBilingualEnabled": String(smartBilingualEnabled),
+                "snippetsEnabled": String(textSnippetsEnabled),
+            ]
+        ))
+
+        defer {
+            let elapsed = DispatchTime.now().uptimeNanoseconds - traceStarted
+            SmartInputTraceLog.shared.record(.init(
+                sequence: traceSequence,
+                phase: "callback_complete",
+                eventType: traceEventTypeName(type),
+                decision: traceDecision,
+                disposition: traceDisposition,
+                keyCode: traceCapturesKeyIdentity ? traceKeyCode : nil,
+                bundleID: traceContext.bundleID,
+                processIdentifier: traceContext.processIdentifier,
+                cachedSourceLayoutID: traceContext.inputSourceID,
+                focusedElementKind: traceFocusKindName(traceContext.focusedElementKind),
+                bufferAfter: traceCapturesText ? getBufferToken() : nil,
+                latencyMicroseconds: Double(elapsed) / 1_000
+            ))
+        }
+
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            traceDecision = type == .tapDisabledByTimeout
+                ? "recover_tap_disabled_by_timeout"
+                : "recover_tap_disabled_by_user_input"
             resetGlobeKeyState()
             recoverEventTapAfterDisable(reason: type == .tapDisabledByTimeout ? "timeout" : "user_input")
             return Unmanaged.passUnretained(event)
         }
 
         if type == .flagsChanged {
+            traceDecision = "handle_flags_changed"
+            traceDisposition = "delegated"
             return handleGlobeFlagsChanged(event)
         }
         
         guard type == .keyDown else {
+            traceDecision = "ignore_non_key_event"
             return Unmanaged.passUnretained(event)
         }
         
         if event.getIntegerValueField(.eventSourceUserData) == magicEventTag {
+            traceDecision = "pass_synthetic_layoutpilot_event"
             return Unmanaged.passUnretained(event)
         }
 
@@ -885,6 +997,7 @@ public final class SmartInputService: @unchecked Sendable {
         let activeBundleID = inputContext.bundleID
 
         if shouldForceUSForSpotlight(keyCode: keyCode, flags: flags) {
+            traceDecision = "force_us_for_spotlight"
             activatePreferredUSInputSource()
             resetBuffer()
             resetContextHistory()
@@ -899,6 +1012,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         if shouldForceUSForBrowserNewTab(keyCode: keyCode, flags: flags, bundleID: activeBundleID) {
+            traceDecision = "force_us_for_browser_new_tab"
             activatePreferredUSInputSource()
             resetBuffer()
             resetContextHistory()
@@ -917,6 +1031,8 @@ public final class SmartInputService: @unchecked Sendable {
             if flags.contains(.maskAlternate), flags.contains(.maskShift),
                !flags.contains(.maskCommand), !flags.contains(.maskControl),
                let handler = onRewriteHotkey {
+                traceDecision = "consume_rewrite_hotkey"
+                traceDisposition = "consumed"
                 handler()
                 return nil
             }
@@ -926,6 +1042,7 @@ public final class SmartInputService: @unchecked Sendable {
             for: activeBundleID,
             focusedElementKind: inputContext.focusedElementKind
         ) {
+            traceDecision = "bypass_secure_or_realtime_context"
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
@@ -937,6 +1054,8 @@ public final class SmartInputService: @unchecked Sendable {
         // Intercept suggestions keys when panel is active
         if isSuggestionsActive {
             if keyCode == 53 { // Escape
+                traceDecision = "consume_suggestions_escape"
+                traceDisposition = "consumed"
                 isSuggestionsActive = false
                 onHideSuggestions?()
                 return nil // Swallow Escape to close the panel
@@ -954,6 +1073,8 @@ public final class SmartInputService: @unchecked Sendable {
                     let suggs = activeSuggestions
                     let callback = activeSelectCallback
                     if idx < suggs.count {
+                        traceDecision = "consume_suggestion_selection_\(idx)"
+                        traceDisposition = "consumed"
                         let selected = suggs[idx]
                         isSuggestionsActive = false
                         onHideSuggestions?()
@@ -971,6 +1092,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         if keyCode == 51 { // Backspace / Delete
+            traceDecision = "backspace_normal"
             setDeferredShortTokenConversion(nil)
             if isSuggestionsActive {
                 isSuggestionsActive = false
@@ -978,7 +1100,8 @@ public final class SmartInputService: @unchecked Sendable {
             }
             if let last = getLastReplacement(), last.isActive {
                 let elapsed = Date().timeIntervalSince(last.timestamp)
-                if elapsed <= _smartBilingualUndoDelay {
+                if last.bundleID == nil || last.bundleID == activeBundleID,
+                   elapsed <= _smartBilingualUndoDelay {
                     switch Self.replacementBackspaceAction(
                         mode: last.mode,
                         boundary: last.boundary,
@@ -986,11 +1109,15 @@ public final class SmartInputService: @unchecked Sendable {
                         allowsBackspaceUndo: last.allowsBackspaceUndo
                     ) {
                     case .deleteNormally:
+                        traceDecision = "backspace_delete_normally_replacement_disallows_undo"
                         deactivateLastReplacement()
                     case .deleteBoundary:
+                        traceDecision = "backspace_delete_snippet_boundary_before_undo"
                         markReplacementBoundaryBackspaceConsumed(last, elapsed: elapsed, keyCode: keyCode)
                         return Unmanaged.passUnretained(event)
                     case .undo(let deleteBoundary):
+                        traceDecision = "consume_backspace_replacement_undo"
+                        traceDisposition = "consumed"
                         performReplacementUndo(
                             last,
                             elapsed: elapsed,
@@ -1000,24 +1127,29 @@ public final class SmartInputService: @unchecked Sendable {
                         return nil // Swallow event.
                     }
                 } else {
+                    traceDecision = last.bundleID != nil && last.bundleID != activeBundleID
+                        ? "backspace_replacement_from_different_app"
+                        : "backspace_after_undo_window"
                     deactivateLastReplacement()
-                    if last.boundary.isEmpty || last.boundaryBackspaceConsumed {
-                        SmartInputEventLog.shared.record(.init(
-                            kind: "backspace_after_replacement_window",
-                            mode: last.mode,
-                            reason: "next input was backspace after undo window; no rejection learned",
-                            bundleID: last.bundleID,
-                            sourceLayoutID: last.originalLayoutID,
-                            targetLayoutID: last.targetLayoutID,
-                            original: last.original,
-                            replacement: last.replacement,
-                            boundary: last.boundary,
-                            keyCode: keyCode,
-                            bufferBefore: getBufferToken(),
-                            elapsedSinceReplacement: elapsed,
-                            replacementAgeLimit: _smartBilingualUndoDelay
-                        ))
-                    }
+                    SmartInputEventLog.shared.record(.init(
+                        kind: last.bundleID != nil && last.bundleID != activeBundleID
+                            ? "backspace_after_replacement_app_change"
+                            : "backspace_after_replacement_window",
+                        mode: last.mode,
+                        reason: last.bundleID != nil && last.bundleID != activeBundleID
+                            ? "replacement belonged to another application; no undo attempted"
+                            : "next input was backspace after undo window; no rejection learned",
+                        bundleID: last.bundleID,
+                        sourceLayoutID: last.originalLayoutID,
+                        targetLayoutID: last.targetLayoutID,
+                        original: last.original,
+                        replacement: last.replacement,
+                        boundary: last.boundary,
+                        keyCode: keyCode,
+                        bufferBefore: getBufferToken(),
+                        elapsedSinceReplacement: elapsed,
+                        replacementAgeLimit: _smartBilingualUndoDelay
+                    ))
                 }
             }
             let bufferBefore = getBufferToken()
@@ -1030,13 +1162,14 @@ public final class SmartInputService: @unchecked Sendable {
                     reason: "removed last buffered character",
                     bundleID: activeBundleID,
                     sourceLayoutID: inputContext.inputSourceID,
-                    keyCode: keyCode,
+                    keyCode: traceCapturesKeyIdentity ? keyCode : nil,
                     bufferBefore: bufferBefore,
                     bufferAfter: bufferAfter
                 ))
             }
             return Unmanaged.passUnretained(event)
         } else if keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126 || keyCode == 53 || keyCode == 48 || keyCode == 36 {
+            traceDecision = "navigation_or_commit_key_reset"
             // Arrow keys (123-126), Escape (53), Tab (48), Return (36)
             resetBuffer()
             resetContextHistory()
@@ -1046,6 +1179,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         guard isEnabled || smartBilingualEnabled || textSnippetsEnabled else {
+            traceDecision = "all_smart_input_features_disabled"
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
@@ -1055,6 +1189,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
+            traceDecision = "modifier_shortcut_reset"
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
@@ -1064,11 +1199,13 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         guard let text = eventText(event), text.count == 1 else {
+            traceDecision = "missing_or_multi_character_event_text"
             deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
         }
 
         guard shouldHandleCurrentContext(inputContext) else {
+            traceDecision = "context_not_eligible"
             resetBuffer()
             resetContextHistory()
             editedWordTracker.reset()
@@ -1100,6 +1237,8 @@ public final class SmartInputService: @unchecked Sendable {
                inputText: text,
                bundleID: activeBundleID
            ) {
+            traceDecision = "consume_snippet_expansion"
+            traceDisposition = "consumed"
             setDeferredShortTokenConversion(nil)
             replaceToken(
                 replacing: expansion.replacingToken,
@@ -1123,6 +1262,7 @@ public final class SmartInputService: @unchecked Sendable {
         }
 
         if snippetsAllowed, shouldBufferSnippetInput(bufferToken + text, bundleID: activeBundleID) {
+            traceDecision = "buffer_snippet_input"
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
@@ -1131,14 +1271,16 @@ public final class SmartInputService: @unchecked Sendable {
            isBilingualAllowed(for: activeBundleID),
            let sourceID = inputContext.inputSourceID,
            shouldBufferBilingualInput(text, sourceLayoutID: sourceID) {
+            traceDecision = "buffer_bilingual_punctuation_key"
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
         
         if shouldCommitBufferedWord(after: text) {
+            traceDecision = "commit_boundary_without_replacement"
             let isDanishAllowed = isDanishAllowed(for: activeBundleID)
             let isBilingualAllowed = isBilingualAllowed(for: activeBundleID)
-            let sourceID = inputContext.inputSourceID
+            let cachedSourceID = inputContext.inputSourceID
             let wasEditingExistingWord = editedWordTracker.isEditingExistingWord
             let tokenResolution: CommitTokenResolution
             if wasEditingExistingWord {
@@ -1153,6 +1295,30 @@ public final class SmartInputService: @unchecked Sendable {
                 )
             }
             let originalToken = tokenResolution.token
+            // The Unicode text in the event is authoritative for which keyboard layout
+            // produced the token. TIS notifications are delivered asynchronously, so the
+            // cached source can still say US while the event already contains Cyrillic (or
+            // vice versa). Using the observed script prevents same-text "conversions" such
+            // as Шэдд -> Шэдд and keeps learning/undo scoped to the real source layout.
+            let sourceID = resolvedSourceLayoutID(
+                for: originalToken,
+                fallback: cachedSourceID
+            )
+            if sourceID != cachedSourceID {
+                SmartInputTraceLog.shared.record(.init(
+                    sequence: traceSequence,
+                    phase: "layout_mismatch",
+                    decision: "observed_token_script_overrode_cached_layout",
+                    keyCode: traceCapturesKeyIdentity ? keyCode : nil,
+                    text: traceCapturesText ? originalToken : nil,
+                    textRedacted: !traceCapturesText,
+                    bundleID: activeBundleID,
+                    processIdentifier: inputContext.processIdentifier,
+                    cachedSourceLayoutID: cachedSourceID,
+                    observedSourceLayoutID: sourceID,
+                    focusedElementKind: traceFocusKindName(inputContext.focusedElementKind)
+                ))
+            }
             let suppressFragmentConversion = editedWordTracker.shouldSuppressFragmentConversion(
                 hasCompleteFocusedWord: tokenResolution.hasCompleteFocusedWord
             )
@@ -1279,6 +1445,8 @@ public final class SmartInputService: @unchecked Sendable {
             
             // Perform actual replacement
             if conversionMode != nil || spellingApplied || contextualPhrase != nil {
+                traceDecision = "consume_word_replacement"
+                traceDisposition = "consumed"
                 let contextBefore = getContextHistoryWords()
                 let effectiveTargetLayoutID = contextualPhrase?.targetLayoutID ?? targetLayoutID
                 
@@ -1291,6 +1459,27 @@ public final class SmartInputService: @unchecked Sendable {
                     } else {
                         convertedBoundary = translateRussianToEnglish(text)
                     }
+                }
+
+                let replacementOriginal = contextualPhrase?.original ?? originalToken
+                let replacementFinal = contextualPhrase?.replacement ?? finalWord
+                if replacementOriginal == replacementFinal && convertedBoundary == text {
+                    traceDecision = "block_noop_replacement"
+                    traceDisposition = "passed"
+                    recordTraceAction(
+                        "noop_replacement_blocked",
+                        bundleID: activeBundleID,
+                        sourceLayoutID: sourceID,
+                        targetLayoutID: effectiveTargetLayoutID,
+                        original: replacementOriginal,
+                        replacement: replacementFinal,
+                        boundary: convertedBoundary,
+                        details: ["mode": conversionMode ?? "unknown"]
+                    )
+                    setDeferredShortTokenConversion(nil)
+                    resetBuffer()
+                    editedWordTracker.noteCommittedBoundary(hadWord: !originalToken.isEmpty)
+                    return Unmanaged.passUnretained(event)
                 }
 
                 if let contextualPhrase {
@@ -1320,9 +1509,6 @@ public final class SmartInputService: @unchecked Sendable {
                     : (spellingApplied
                         ? "spelling auto-corrected '\(wordToCheck)' to '\(finalWord)' after \(conversionMode ?? "no") conversion"
                         : (conversionReason ?? ""))
-                let replacementOriginal = contextualPhrase?.original ?? originalToken
-                let replacementFinal = contextualPhrase?.replacement ?? finalWord
-                
                 recordReplacementForUndo(
                     mode: mode,
                     reason: reason,
@@ -1342,8 +1528,11 @@ public final class SmartInputService: @unchecked Sendable {
                 
                 if let effectiveTargetLayoutID {
                     if shouldSwitchLayout(to: effectiveTargetLayoutID, replacement: finalWord) {
-                        DispatchQueue.main.async {
-                            try? SystemInputSourceClient().activateInputSource(withID: effectiveTargetLayoutID)
+                        DispatchQueue.main.async { [weak self] in
+                            self?.activateInputSourceAndUpdateCache(
+                                effectiveTargetLayoutID,
+                                reason: "replacement_target_layout_activated"
+                            )
                         }
                     }
                 }
@@ -1442,19 +1631,165 @@ public final class SmartInputService: @unchecked Sendable {
         }
         
         if let character = text.first, isWordCharacter(character) {
+            traceDecision = "buffer_word_character"
             appendToBuffer(text)
             return Unmanaged.passUnretained(event)
         }
         
+        traceDecision = "non_word_character_reset"
         resetBuffer()
         editedWordTracker.reset()
         setDeferredShortTokenConversion(nil)
         return Unmanaged.passUnretained(event)
     }
 
+    func shouldCaptureTraceText(in context: InputContextSnapshot) -> Bool {
+        guard !excludedBundleIDs.contains(context.bundleID) else { return false }
+        switch context.focusedElementKind {
+        case .secureText, .nonText:
+            return false
+        case .text:
+            return true
+        case .unknown:
+            // Accessibility classification is asynchronous after an app/focus change. An
+            // unknown control can therefore be a password field that has not been classified
+            // yet. Preserve event timing, flags, app and layout, but never record Unicode text
+            // until AX confirms an ordinary text control.
+            return false
+        }
+    }
+
+    func shouldCaptureTraceKeyIdentity(in context: InputContextSnapshot) -> Bool {
+        guard !excludedBundleIDs.contains(context.bundleID) else { return false }
+        switch context.focusedElementKind {
+        case .secureText, .unknown:
+            // A key code plus layout and modifiers is enough to reconstruct secret text.
+            // Keep the fact/timing/result of the event, but redact its identity until AX has
+            // classified the focused control.
+            return false
+        case .text, .nonText:
+            return true
+        }
+    }
+
+    private func traceEventTypeName(_ type: CGEventType) -> String {
+        switch type {
+        case .keyDown: return "key_down"
+        case .flagsChanged: return "flags_changed"
+        case .tapDisabledByTimeout: return "tap_disabled_by_timeout"
+        case .tapDisabledByUserInput: return "tap_disabled_by_user_input"
+        default: return "cg_event_\(type.rawValue)"
+        }
+    }
+
+    private func traceFocusKindName(_ kind: AXFocusedElementKind) -> String {
+        switch kind {
+        case .unknown: return "unknown"
+        case .secureText: return "secure_text"
+        case .text: return "text"
+        case .nonText: return "non_text"
+        }
+    }
+
+    private func traceFlagNames(_ flags: CGEventFlags) -> [String] {
+        var names: [String] = []
+        if flags.contains(.maskCommand) { names.append("command") }
+        if flags.contains(.maskShift) { names.append("shift") }
+        if flags.contains(.maskAlternate) { names.append("option") }
+        if flags.contains(.maskControl) { names.append("control") }
+        if flags.contains(.maskAlphaShift) { names.append("caps_lock") }
+        if flags.contains(.maskSecondaryFn) { names.append("fn") }
+        if flags.contains(.maskNumericPad) { names.append("numeric_pad") }
+        if flags.contains(.maskHelp) { names.append("help") }
+        if flags.contains(.maskNonCoalesced) { names.append("non_coalesced") }
+        return names
+    }
+
+    private func recordTraceState(
+        _ decision: String,
+        details: [String: String]? = nil
+    ) {
+        let context = inputContextSnapshot()
+        SmartInputTraceLog.shared.record(.init(
+            sequence: SmartInputTraceLog.shared.nextSequence(),
+            phase: "state_change",
+            decision: decision,
+            bundleID: context.bundleID,
+            processIdentifier: context.processIdentifier,
+            cachedSourceLayoutID: context.inputSourceID,
+            focusedElementKind: traceFocusKindName(context.focusedElementKind),
+            details: details
+        ))
+    }
+
+    private func recordTraceAction(
+        _ decision: String,
+        bundleID: String? = nil,
+        sourceLayoutID: String? = nil,
+        targetLayoutID: String? = nil,
+        original: String? = nil,
+        replacement: String? = nil,
+        boundary: String? = nil,
+        details: [String: String]? = nil
+    ) {
+        let context = inputContextSnapshot()
+        let capturesText = shouldCaptureTraceText(in: context)
+        var traceDetails = details ?? [:]
+        if let targetLayoutID {
+            traceDetails["targetLayoutID"] = targetLayoutID
+        }
+        SmartInputTraceLog.shared.record(.init(
+            sequence: SmartInputTraceLog.shared.nextSequence(),
+            phase: "action",
+            decision: decision,
+            textRedacted: (original != nil || replacement != nil) ? !capturesText : nil,
+            bundleID: bundleID ?? context.bundleID,
+            processIdentifier: context.processIdentifier,
+            cachedSourceLayoutID: context.inputSourceID,
+            observedSourceLayoutID: sourceLayoutID,
+            focusedElementKind: traceFocusKindName(context.focusedElementKind),
+            lastReplacementOriginal: capturesText ? original : nil,
+            lastReplacementText: capturesText ? replacement : nil,
+            lastReplacementBoundary: capturesText ? boundary : nil,
+            details: traceDetails.isEmpty ? nil : traceDetails
+        ))
+    }
+
+    private func updateCachedInputSourceID(_ sourceID: String, reason: String) {
+        let previousSourceID = inputContextSnapshot().inputSourceID
+        lock.lock()
+        _inputContext.inputSourceID = sourceID
+        lock.unlock()
+        recordTraceState(
+            reason,
+            details: [
+                "previousSource": previousSourceID ?? "nil",
+                "currentSource": sourceID,
+            ]
+        )
+    }
+
+    private func activateInputSourceAndUpdateCache(_ sourceID: String, reason: String) {
+        precondition(Thread.isMainThread)
+        do {
+            try SystemInputSourceClient().activateInputSource(withID: sourceID)
+            updateCachedInputSourceID(sourceID, reason: reason)
+        } catch {
+            recordTraceState(
+                "input_source_activation_failed",
+                details: [
+                    "requestedSource": sourceID,
+                    "reason": reason,
+                    "error": error.localizedDescription,
+                ]
+            )
+        }
+    }
+
     private func recoverEventTapAfterDisable(reason: String) {
         guard let eventTap else { return }
         logger.warning("Smart input event tap disabled by \(reason, privacy: .public); re-enabling")
+        recordTraceState("event_tap_disabled_reenable", details: ["reason": reason])
         CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
@@ -1467,6 +1802,7 @@ public final class SmartInputService: @unchecked Sendable {
         guard CFMachPortIsValid(tap) else {
             resetGlobeKeyState()
             logger.error("Smart input event tap became invalid; recreating")
+            recordTraceState("event_tap_invalid_recreate")
             CFRunLoopStop(runLoop)
             return
         }
@@ -1474,6 +1810,7 @@ public final class SmartInputService: @unchecked Sendable {
         if !CGEvent.tapIsEnabled(tap: tap) {
             resetGlobeKeyState()
             logger.warning("Smart input event tap was disabled without callback; re-enabling")
+            recordTraceState("event_tap_silently_disabled_reenable")
             CGEvent.tapEnable(tap: tap, enable: true)
         }
     }
@@ -1500,6 +1837,10 @@ public final class SmartInputService: @unchecked Sendable {
         case .consumeAndCycle:
             do {
                 if let selectedSource = try instantInputSourceCycler.cycleToNextSource() {
+                    updateCachedInputSourceID(
+                        selectedSource.sourceID,
+                        reason: "instant_globe_layout_activated"
+                    )
                     onInstantGlobeSwitch?(selectedSource)
                 }
             } catch {
@@ -1553,7 +1894,15 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func activatePreferredUSInputSource() {
-        Self.activatePreferredUSInputSource(using: SystemInputSourceClient())
+        let client = SystemInputSourceClient()
+        Self.activatePreferredUSInputSource(using: client)
+        if let selectedSourceID = client.currentInputSourceID(),
+           usInputSources.contains(selectedSourceID) {
+            updateCachedInputSourceID(
+                selectedSourceID,
+                reason: "forced_us_layout_activated"
+            )
+        }
     }
 
     static func activatePreferredUSInputSource(using client: InputSourceClient) {
@@ -1954,12 +2303,35 @@ public final class SmartInputService: @unchecked Sendable {
         return chars[0].unicodeScalars.allSatisfy { CharacterSet.uppercaseLetters.contains($0) }
     }
     
-    private func isEnglishContractionSuffix(_ token: String) -> Bool {
-        token == "'s" || token == "'S" || token == "‘s" || token == "‘S" || token == "’s" || token == "’S"
+    private func isEnglishContractionToken(_ token: String) -> Bool {
+        let normalized = token
+            .replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "’", with: "'")
+            .lowercased()
+        let suffixes = ["'s", "'t", "'d", "'l", "'ll", "'re", "'ve", "'m"]
+
+        // A detached suffix can appear when the buffer was reset by an app/focus/layout
+        // transition. Treat it as English instead of turning `'l` into Danish `øl`.
+        if suffixes.contains(normalized) {
+            return true
+        }
+
+        guard let apostrophe = normalized.lastIndex(of: "'") else {
+            return false
+        }
+        let prefix = normalized[..<apostrophe]
+        let suffix = normalized[apostrophe...]
+        guard !prefix.isEmpty,
+              prefix.unicodeScalars.allSatisfy({ scalar in
+                  (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
+              }) else {
+            return false
+        }
+        return suffixes.contains(String(suffix))
     }
     
     private func isPlausibleDanishToken(_ token: String) -> Bool {
-        if isEnglishContractionSuffix(token) {
+        if isEnglishContractionToken(token) {
             return false
         }
         
@@ -2023,7 +2395,7 @@ public final class SmartInputService: @unchecked Sendable {
         replacementForToken(buffer.token)
     }
     
-    private func replacementForToken(_ token: String) -> String? {
+    func replacementForToken(_ token: String) -> String? {
         guard isPlausibleDanishToken(token) else {
             return nil
         }
@@ -2165,19 +2537,74 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
+    private func isASCIIEnglishLetter(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1,
+              let value = character.unicodeScalars.first?.value else {
+            return false
+        }
+        return (65...90).contains(value) || (97...122).contains(value)
+    }
+
+    private func isEnglishLexicalToken(_ word: String) -> Bool {
+        let characters = Array(word)
+        guard let first = characters.first,
+              let last = characters.last,
+              isASCIIEnglishLetter(first),
+              isASCIIEnglishLetter(last) else {
+            return false
+        }
+
+        var previousWasApostrophe = false
+        for character in characters {
+            if isASCIIEnglishLetter(character) {
+                previousWasApostrophe = false
+                continue
+            }
+            guard character == "'" || character == "’",
+                  !previousWasApostrophe else {
+                return false
+            }
+            previousWasApostrophe = true
+        }
+        return true
+    }
+
     private func isEnglishLayoutWordToken(_ token: String) -> Bool {
-        !token.isEmpty && isCyrillicWord(translateEnglishToRussian(token))
+        !token.isEmpty && token.allSatisfy { Self.qwertyToYuken[$0] != nil }
     }
 
     private func isCyrillicWord(_ word: String) -> Bool {
-        word.unicodeScalars.allSatisfy { scalar in
+        !word.isEmpty && word.unicodeScalars.allSatisfy { scalar in
             (0x0400...0x04FF).contains(scalar.value)
         }
+    }
+
+    func resolvedSourceLayoutID(for token: String, fallback: String?) -> String? {
+        if isCyrillicWord(token) {
+            let (_, russianLayoutID) = findLayouts()
+            return russianLayoutID ?? fallback
+        }
+        if isEnglishLayoutWordToken(token) {
+            let (englishLayoutID, _) = findLayouts()
+            return englishLayoutID ?? fallback
+        }
+        return fallback
     }
 
     public struct BilingualResult {
         public let replacement: String
         public let targetLayoutID: String?
+        public let sourceLayoutID: String?
+
+        public init(
+            replacement: String,
+            targetLayoutID: String?,
+            sourceLayoutID: String? = nil
+        ) {
+            self.replacement = replacement
+            self.targetLayoutID = targetLayoutID
+            self.sourceLayoutID = sourceLayoutID
+        }
     }
 
     public func checkBilingualConversion(for token: String) -> BilingualResult? {
@@ -2199,11 +2626,15 @@ public final class SmartInputService: @unchecked Sendable {
         bundleID: String? = nil,
         logSuppression: Bool = false
     ) -> BilingualResult? {
+        let effectiveSourceLayoutID = resolvedSourceLayoutID(
+            for: token,
+            fallback: sourceLayoutID
+        ) ?? sourceLayoutID
         guard let candidate = bilingualCandidate(
             for: token,
-            sourceLayoutID: sourceLayoutID,
+            sourceLayoutID: effectiveSourceLayoutID,
             contextWords: contextWords
-        ) else {
+        ), candidate.replacement != token else {
             return nil
         }
 
@@ -2211,21 +2642,21 @@ public final class SmartInputService: @unchecked Sendable {
             mode: "bilingual",
             original: token,
             replacement: candidate.replacement,
-            sourceLayoutID: sourceLayoutID,
+            sourceLayoutID: effectiveSourceLayoutID,
             targetLayoutID: candidate.targetLayoutID,
             bundleID: learningLookupBundleID(for: bundleID)
         ) {
             var shouldBypass = isForcedBilingualConversion(
                 original: token,
                 replacement: candidate.replacement,
-                sourceLayoutID: sourceLayoutID
+                sourceLayoutID: effectiveSourceLayoutID
             )
             if !shouldBypass, suppressionReason == "accepted_word_dictionary" {
-                let isUS = usInputSources.contains(sourceLayoutID)
-                let isRussian = sourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
-                                sourceLayoutID.hasSuffix(".ru") ||
-                                sourceLayoutID.contains(".ru.") ||
-                                sourceLayoutID == "ru"
+                let isUS = usInputSources.contains(effectiveSourceLayoutID)
+                let isRussian = effectiveSourceLayoutID.localizedCaseInsensitiveContains("Russian") ||
+                                effectiveSourceLayoutID.hasSuffix(".ru") ||
+                                effectiveSourceLayoutID.contains(".ru.") ||
+                                effectiveSourceLayoutID == "ru"
                 
                 if isUS {
                     shouldBypass = !isValidEnglishWord(token) && isValidRussianWord(candidate.replacement)
@@ -2241,7 +2672,7 @@ public final class SmartInputService: @unchecked Sendable {
                         mode: "bilingual",
                         reason: "learned conversion should not be applied",
                         bundleID: bundleID,
-                        sourceLayoutID: sourceLayoutID,
+                        sourceLayoutID: effectiveSourceLayoutID,
                         targetLayoutID: candidate.targetLayoutID,
                         original: token,
                         replacement: candidate.replacement,
@@ -2253,7 +2684,11 @@ public final class SmartInputService: @unchecked Sendable {
             }
         }
 
-        return candidate
+        return BilingualResult(
+            replacement: candidate.replacement,
+            targetLayoutID: candidate.targetLayoutID,
+            sourceLayoutID: effectiveSourceLayoutID
+        )
     }
 
     private func isForcedBilingualConversion(
@@ -2370,7 +2805,7 @@ public final class SmartInputService: @unchecked Sendable {
                 if translated == token {
                     return nil
                 }
-                guard isLatinWord(translated) else { return nil }
+                guard isEnglishLexicalToken(translated) else { return nil }
                 if commonEnglishShortWords.contains(translated.lowercased()) && isValidEnglishWord(translated) {
                     let (englishLayoutID, _) = findLayouts()
                     return BilingualResult(replacement: translated, targetLayoutID: englishLayoutID)
@@ -2405,7 +2840,7 @@ public final class SmartInputService: @unchecked Sendable {
             
             let rawTranslated = translateRussianToEnglish(token)
             let translated = correctingDoubleInitialUppercase(in: rawTranslated) ?? rawTranslated
-            guard isLatinWord(translated) else { return nil }
+            guard isEnglishLexicalToken(translated) else { return nil }
             let isWord = isValidEnglishWord(translated)
             let isLikelyWord = token.count >= 4 &&
                                hasGuesses(for: translated, language: "en") &&
@@ -2675,6 +3110,21 @@ public final class SmartInputService: @unchecked Sendable {
         contextBefore: [String],
         allowsBackspaceUndo: Bool = true
     ) {
+        recordTraceAction(
+            "replacement_recorded_for_undo",
+            bundleID: bundleID,
+            sourceLayoutID: originalLayoutID,
+            targetLayoutID: targetLayoutID,
+            original: original,
+            replacement: replacement,
+            boundary: boundary,
+            details: [
+                "mode": mode,
+                "reason": reason,
+                "allowsBackspaceUndo": String(allowsBackspaceUndo),
+                "undoWindowSeconds": String(_smartBilingualUndoDelay),
+            ]
+        )
         setLastReplacement(LastReplacementInfo(
             mode: mode,
             reason: reason,
@@ -2758,6 +3208,20 @@ public final class SmartInputService: @unchecked Sendable {
         elapsed: Double,
         keyCode: Int64
     ) {
+        recordTraceAction(
+            "replacement_boundary_deleted_before_undo",
+            bundleID: last.bundleID,
+            sourceLayoutID: last.originalLayoutID,
+            targetLayoutID: last.targetLayoutID,
+            original: last.original,
+            replacement: last.replacement,
+            boundary: last.boundary,
+            details: [
+                "mode": last.mode,
+                "elapsedSeconds": String(elapsed),
+                "keyCode": String(keyCode),
+            ]
+        )
         var updated = last
         updated.boundaryBackspaceConsumed = true
         updated.timestamp = Date()
@@ -2786,6 +3250,22 @@ public final class SmartInputService: @unchecked Sendable {
         keyCode: Int64,
         deleteBoundary: Bool
     ) {
+        recordTraceAction(
+            "replacement_undo_started",
+            bundleID: last.bundleID,
+            sourceLayoutID: last.originalLayoutID,
+            targetLayoutID: last.targetLayoutID,
+            original: last.original,
+            replacement: last.replacement,
+            boundary: last.boundary,
+            details: [
+                "mode": last.mode,
+                "elapsedSeconds": String(elapsed),
+                "deleteBoundary": String(deleteBoundary),
+                "deleteCount": String(last.replacement.count + (deleteBoundary ? last.boundary.count : 0)),
+                "keyCode": String(keyCode),
+            ]
+        )
         deactivateLastReplacement()
         recordRejectedConversionIfNeeded(last)
         
@@ -2797,8 +3277,11 @@ public final class SmartInputService: @unchecked Sendable {
         postText(last.original)
         
         if let originalLayoutID = last.originalLayoutID {
-            DispatchQueue.main.async {
-                try? SystemInputSourceClient().activateInputSource(withID: originalLayoutID)
+            DispatchQueue.main.async { [weak self] in
+                self?.activateInputSourceAndUpdateCache(
+                    originalLayoutID,
+                    reason: "replacement_undo_original_layout_activated"
+                )
             }
         }
         

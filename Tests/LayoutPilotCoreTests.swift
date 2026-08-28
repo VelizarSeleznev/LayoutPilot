@@ -1394,6 +1394,54 @@ final class LayoutPilotCoreTests: XCTestCase {
         }
     }
 
+    func testBilingualConversionUsesObservedScriptWhenCachedLayoutIsStale() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: tempURL)
+        )
+
+        let contractionResult = service.checkBilingualConversion(
+            for: "Шэдд",
+            sourceLayoutID: "com.apple.keylayout.US"
+        )
+        let likeResult = service.checkBilingualConversion(
+            for: "Дшлу",
+            sourceLayoutID: "com.apple.keylayout.US"
+        )
+
+        XCTAssertEqual(contractionResult?.replacement, "I'll")
+        XCTAssertEqual(contractionResult?.targetLayoutID, "com.apple.keylayout.US")
+        XCTAssertEqual(contractionResult?.sourceLayoutID, "com.apple.keylayout.RussianWin")
+        XCTAssertEqual(likeResult?.replacement, "Like")
+        XCTAssertEqual(likeResult?.targetLayoutID, "com.apple.keylayout.US")
+        XCTAssertEqual(likeResult?.sourceLayoutID, "com.apple.keylayout.RussianWin")
+        XCTAssertNil(service.checkBilingualConversion(
+            for: "привет",
+            sourceLayoutID: "com.apple.keylayout.US"
+        ))
+    }
+
+    func testSmartDanishDoesNotTreatEnglishContractionsAsDanishShortcuts() {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("learning.json")
+        let service = SmartInputService(
+            learningStore: SmartInputLearningStore(fileURL: tempURL)
+        )
+
+        for contraction in ["'l", "'ll", "I'll", "we're", "I've", "he'd", "I'm", "don't"] {
+            XCTAssertNil(
+                service.replacementForToken(contraction),
+                "English contraction must survive Smart Danish: \(contraction)"
+            )
+        }
+
+        XCTAssertEqual(service.replacementForToken("Pr'v"), "Prøv")
+        XCTAssertEqual(service.replacementForToken("unders'ge"), "undersøge")
+    }
+
     func testBilingualConversionAcceptsUSKeysThatProduceRussianLetters() {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -2384,6 +2432,94 @@ final class LayoutPilotCoreTests: XCTestCase {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         XCTAssertEqual(try decoder.decode(SmartInputEventLog.Event.self, from: Data(lines[0].utf8)).kind, "replacement")
+    }
+
+    func testDetailedSmartInputTraceWritesStructuredLocalEvents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = directory.appendingPathComponent("trace.jsonl")
+        let trace = SmartInputTraceLog(
+            fileURL: fileURL,
+            maxLogSizeBytes: 1024 * 1024,
+            archiveCount: 1,
+            flushDelay: 60,
+            isEnabled: true
+        )
+
+        trace.record(.init(
+            sequence: 42,
+            phase: "event_received",
+            eventType: "key_down",
+            decision: "buffer_word_character",
+            keyCode: 37,
+            text: "l",
+            flagsRaw: 0,
+            flags: [],
+            bundleID: "com.example.Editor",
+            cachedSourceLayoutID: "com.apple.keylayout.US",
+            observedSourceLayoutID: "com.apple.keylayout.US",
+            focusedElementKind: "text",
+            bufferBefore: "I'"
+        ))
+        trace.flushSynchronously()
+
+        let data = try Data(contentsOf: fileURL)
+        let line = try XCTUnwrap(String(data: data, encoding: .utf8)?.split(separator: "\n").first)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(
+            SmartInputTraceLog.Event.self,
+            from: Data(line.utf8)
+        )
+        XCTAssertEqual(decoded.sequence, 42)
+        XCTAssertEqual(decoded.text, "l")
+        XCTAssertEqual(decoded.bufferBefore, "I'")
+        XCTAssertEqual(decoded.cachedSourceLayoutID, "com.apple.keylayout.US")
+        XCTAssertEqual(decoded.decision, "buffer_word_character")
+
+        let permissions = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: fileURL.path)[.posixPermissions] as? NSNumber
+        )
+        XCTAssertEqual(permissions.intValue & 0o777, 0o600)
+    }
+
+    func testDetailedTraceRedactsTextUntilAccessibilityConfirmsPlainTextField() {
+        let service = SmartInputService.shared
+        let base = SmartInputService.InputContextSnapshot(
+            bundleID: "com.example.Editor",
+            processIdentifier: 42,
+            inputSourceID: "com.apple.keylayout.US",
+            focusedElementKind: .unknown
+        )
+
+        XCTAssertFalse(service.shouldCaptureTraceText(in: base))
+        XCTAssertFalse(service.shouldCaptureTraceKeyIdentity(in: base))
+        XCTAssertFalse(service.shouldCaptureTraceText(in: .init(
+            bundleID: base.bundleID,
+            processIdentifier: base.processIdentifier,
+            inputSourceID: base.inputSourceID,
+            focusedElementKind: .secureText
+        )))
+        XCTAssertFalse(service.shouldCaptureTraceKeyIdentity(in: .init(
+            bundleID: base.bundleID,
+            processIdentifier: base.processIdentifier,
+            inputSourceID: base.inputSourceID,
+            focusedElementKind: .secureText
+        )))
+        let textContext = SmartInputService.InputContextSnapshot(
+            bundleID: base.bundleID,
+            processIdentifier: base.processIdentifier,
+            inputSourceID: base.inputSourceID,
+            focusedElementKind: .text
+        )
+        XCTAssertTrue(service.shouldCaptureTraceText(in: textContext))
+        XCTAssertTrue(service.shouldCaptureTraceKeyIdentity(in: textContext))
+        XCTAssertTrue(service.shouldCaptureTraceKeyIdentity(in: .init(
+            bundleID: base.bundleID,
+            processIdentifier: base.processIdentifier,
+            inputSourceID: base.inputSourceID,
+            focusedElementKind: .nonText
+        )))
     }
     
     func testSpellingSuggestions() {

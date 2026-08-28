@@ -4,6 +4,7 @@ public enum LayoutPilotPaths {
     public static let configurationFolderName = "LayoutPilot"
     public static let configurationFileName = "configuration.json"
     public static let smartInputEventLogFileName = "smart-input-events.jsonl"
+    public static let smartInputTraceLogFileName = "smart-input-key-trace.jsonl"
     public static let smartInputLearningFileName = "smart-input-learning.json"
 
     public static func applicationSupportDirectory() throws -> URL {
@@ -20,6 +21,10 @@ public enum LayoutPilotPaths {
 
     public static func smartInputEventLogURL() throws -> URL {
         try applicationSupportDirectory().appendingPathComponent(smartInputEventLogFileName)
+    }
+
+    public static func smartInputTraceLogURL() throws -> URL {
+        try applicationSupportDirectory().appendingPathComponent(smartInputTraceLogFileName)
     }
 
     public static func smartInputLearningURL() throws -> URL {

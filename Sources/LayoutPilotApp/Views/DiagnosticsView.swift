@@ -12,6 +12,7 @@ struct DiagnosticsView: View {
                         diagnosticsRow(title: "Engine running", value: appState.engine.isRunning ? "Yes" : "No")
                         diagnosticsRow(title: "Configuration file", value: configurationPath)
                         diagnosticsRow(title: "Smart input event log", value: smartInputEventLogPath)
+                        diagnosticsRow(title: "Detailed local key trace", value: smartInputTraceLogPath)
                         diagnosticsRow(title: "Smart RU/EN Input", value: appState.store.configuration.smartBilingualEnabled ? "Yes" : "No")
                         diagnosticsRow(title: "Smart Danish Input", value: appState.store.configuration.smartDanishInputEnabled ? "Yes" : "No")
                         diagnosticsRow(title: "Text snippets", value: appState.store.configuration.textSnippetsEnabled ? "\(appState.store.configuration.textSnippets.filter(\.isEnabled).count) enabled" : "No")
@@ -53,6 +54,10 @@ struct DiagnosticsView: View {
 
     private var smartInputEventLogPath: String {
         (try? LayoutPilotPaths.smartInputEventLogURL().path) ?? "Unavailable"
+    }
+
+    private var smartInputTraceLogPath: String {
+        (try? LayoutPilotPaths.smartInputTraceLogURL().path) ?? "Unavailable"
     }
 
     private func diagnosticsRow(title: String, value: String) -> some View {
