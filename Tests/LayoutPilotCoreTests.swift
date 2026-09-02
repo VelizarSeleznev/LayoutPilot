@@ -1423,7 +1423,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         ))
     }
 
-    func testSmartDanishDoesNotTreatEnglishContractionsAsDanishShortcuts() {
+    func testSmartDanishDisambiguatesEnglishContractionsFromDanishShortcuts() {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("learning.json")
@@ -1431,13 +1431,16 @@ final class LayoutPilotCoreTests: XCTestCase {
             learningStore: SmartInputLearningStore(fileURL: tempURL)
         )
 
-        for contraction in ["'l", "'ll", "I'll", "we're", "I've", "he'd", "I'm", "don't"] {
+        for contraction in ["I'll", "we're", "I've", "he'd", "I'm", "don't"] {
             XCTAssertNil(
                 service.replacementForToken(contraction),
                 "English contraction must survive Smart Danish: \(contraction)"
             )
         }
 
+        XCTAssertEqual(service.replacementForToken("'l"), "øl")
+        XCTAssertEqual(service.replacementForToken("'m"), "øm")
+        XCTAssertEqual(service.replacementForToken("br'd"), "brød")
         XCTAssertEqual(service.replacementForToken("Pr'v"), "Prøv")
         XCTAssertEqual(service.replacementForToken("unders'ge"), "undersøge")
     }

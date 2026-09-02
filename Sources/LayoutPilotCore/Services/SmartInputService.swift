@@ -2310,12 +2310,6 @@ public final class SmartInputService: @unchecked Sendable {
             .lowercased()
         let suffixes = ["'s", "'t", "'d", "'l", "'ll", "'re", "'ve", "'m"]
 
-        // A detached suffix can appear when the buffer was reset by an app/focus/layout
-        // transition. Treat it as English instead of turning `'l` into Danish `øl`.
-        if suffixes.contains(normalized) {
-            return true
-        }
-
         guard let apostrophe = normalized.lastIndex(of: "'") else {
             return false
         }
@@ -2327,7 +2321,14 @@ public final class SmartInputService: @unchecked Sendable {
               }) else {
             return false
         }
-        return suffixes.contains(String(suffix))
+
+        // Real English contractions have an English word before the apostrophe.
+        // Requiring that prefix keeps "I'm" and "he'd" intact without stealing
+        // Danish shortcuts such as "'l" -> "øl" or "br'd" -> "brød".
+        if normalized.hasSuffix("n't") {
+            return true
+        }
+        return suffixes.contains(String(suffix)) && isValidEnglishWord(String(prefix))
     }
     
     private func isPlausibleDanishToken(_ token: String) -> Bool {
