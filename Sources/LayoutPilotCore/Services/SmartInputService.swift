@@ -37,6 +37,7 @@ public final class SmartInputService: @unchecked Sendable {
         var bundleID = ""
         var processIdentifier: pid_t?
         var inputSourceID: String?
+        var keyboardTextMap: KeyboardEventTextMap?
         var focusedElementKind: AXFocusedElementKind = .unknown
     }
     
@@ -486,6 +487,7 @@ public final class SmartInputService: @unchecked Sendable {
     private var _cachedEnglishLayoutID: String?
     private var _cachedRussianLayoutID: String?
     private var _inputContext = InputContextSnapshot()
+    private var keyboardTextMaps: [String: KeyboardEventTextMap] = [:]
 
     private var cachedEnglishLayoutID: String? {
         get {
@@ -669,6 +671,9 @@ public final class SmartInputService: @unchecked Sendable {
 
     private func performLayoutCaching() {
         let sources = instantInputSourceCycler.refreshSources()
+        let textMaps = Dictionary(uniqueKeysWithValues: sources.compactMap { source in
+            KeyboardEventTextMap.load(sourceID: source.sourceID).map { (source.sourceID, $0) }
+        })
         
         let english = sources.first { source in
             let id = source.sourceID.lowercased()
@@ -683,11 +688,14 @@ public final class SmartInputService: @unchecked Sendable {
         }?.sourceID ?? "com.apple.keylayout.RussianWin"
         
         let currentSourceID = currentInputSourceIDOnMainThread()
+        let textMap = currentSourceID.flatMap { KeyboardEventTextMap.load(sourceID: $0) }
         let previous = inputContextSnapshot()
         lock.lock()
+        keyboardTextMaps = textMaps
         _cachedEnglishLayoutID = english
         _cachedRussianLayoutID = russian
         _inputContext.inputSourceID = currentSourceID
+        _inputContext.keyboardTextMap = textMap
         lock.unlock()
         recordTraceState(
             "layout_cache_refresh",
@@ -703,9 +711,11 @@ public final class SmartInputService: @unchecked Sendable {
     private func refreshCurrentInputSource() {
         precondition(Thread.isMainThread)
         let currentSourceID = currentInputSourceIDOnMainThread()
+        let textMap = currentSourceID.flatMap { KeyboardEventTextMap.load(sourceID: $0) }
         let previousSourceID = inputContextSnapshot().inputSourceID
         lock.lock()
         _inputContext.inputSourceID = currentSourceID
+        _inputContext.keyboardTextMap = textMap
         lock.unlock()
         recordTraceState(
             "selected_input_source_notification",
@@ -1198,7 +1208,13 @@ public final class SmartInputService: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         
-        guard let text = eventText(event), text.count == 1 else {
+        let rawText = eventText(event)
+        // Preserve explicitly injected Unicode (accessibility tools, dictation, etc.).
+        let isHardwareKey = event.getIntegerValueField(.eventSourceUnixProcessID) == 0
+        let mappedText = isHardwareKey ? (inputContext.keyboardTextMap?.text(
+            keyCode: keyCode, flags: flags, fallback: rawText
+        ) ?? rawText) : rawText
+        guard let text = mappedText, text.count == 1 else {
             traceDecision = "missing_or_multi_character_event_text"
             deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
@@ -1212,6 +1228,12 @@ public final class SmartInputService: @unchecked Sendable {
             setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
+        }
+
+        if text != rawText {
+            recordTraceState("physical_key_text_resolved", details: [
+                "sourceLayout": inputContext.inputSourceID ?? "nil"
+            ])
         }
 
         if let last = getLastReplacement(), last.isActive {
@@ -1295,11 +1317,9 @@ public final class SmartInputService: @unchecked Sendable {
                 )
             }
             let originalToken = tokenResolution.token
-            // The Unicode text in the event is authoritative for which keyboard layout
-            // produced the token. TIS notifications are delivered asynchronously, so the
-            // cached source can still say US while the event already contains Cyrillic (or
-            // vice versa). Using the observed script prevents same-text "conversions" such
-            // as Шэдд -> Шэдд and keeps learning/undo scoped to the real source layout.
+            // The buffer uses physical-key translation for supported direct layouts.
+            // Raw session-tap Unicode can lag behind a confirmed layout switch. For
+            // other layouts retain script inference to avoid same-text conversions.
             let sourceID = resolvedSourceLayoutID(
                 for: originalToken,
                 fallback: cachedSourceID
@@ -1759,6 +1779,7 @@ public final class SmartInputService: @unchecked Sendable {
         let previousSourceID = inputContextSnapshot().inputSourceID
         lock.lock()
         _inputContext.inputSourceID = sourceID
+        _inputContext.keyboardTextMap = keyboardTextMaps[sourceID]
         lock.unlock()
         recordTraceState(
             reason,
