@@ -32,6 +32,9 @@ final class LayoutPilotAppState {
             SmartInputService.shared.updateTerminalPaneFocus(focus)
             engine?.refreshNow()
         }
+        engine.onInputSourceActivated = { sourceID in
+            SmartInputService.shared.inputSourceActivatedByAutomation(sourceID)
+        }
         engine.start()
         Self.syncSmartInputService(with: store.configuration)
         Self.configureRemoteUsageReporting(with: store.configuration)

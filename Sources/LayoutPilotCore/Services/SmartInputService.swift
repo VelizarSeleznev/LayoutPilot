@@ -889,6 +889,12 @@ public final class SmartInputService: @unchecked Sendable {
         scheduleFocusedElementRefresh(expectedPID: processIdentifier)
     }
 
+    /// Another part of LayoutPilot selected `sourceID`. The system notification does not
+    /// reach the process that made the switch, so the cached layout would otherwise go stale.
+    public func inputSourceActivatedByAutomation(_ sourceID: String) {
+        updateCachedInputSourceID(sourceID, reason: "automation_layout_activated")
+    }
+
     /// The herdr pane that owns the keyboard changed, or its agent started or exited.
     public func updateTerminalPaneFocus(_ focus: TerminalPaneFocus?) {
         precondition(Thread.isMainThread)

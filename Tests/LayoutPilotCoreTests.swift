@@ -1182,6 +1182,8 @@ final class LayoutPilotCoreTests: XCTestCase {
             terminalPaneFocusProvider: panes,
             activeContextProvider: { ghostty }
         )
+        var reportedSourceIDs: [String] = []
+        engine.onInputSourceActivated = { reportedSourceIDs.append($0) }
 
         panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p1", agent: "claude")
         engine.refreshNow()
@@ -1208,6 +1210,7 @@ final class LayoutPilotCoreTests: XCTestCase {
         panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p1", agent: "claude")
         engine.refreshNow()
         XCTAssertEqual(inputSourceClient.activatedSourceIDs, [russian, "com.apple.keylayout.US", russian])
+        XCTAssertEqual(reportedSourceIDs, inputSourceClient.activatedSourceIDs, "the smart input cache hears every switch")
     }
 
     func testApplicationActivationNotificationAppliesRuleForNewFrontmostApp() async throws {

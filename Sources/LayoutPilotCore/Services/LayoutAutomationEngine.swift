@@ -11,6 +11,9 @@ public final class LayoutAutomationEngine {
     public private(set) var isRunning = false
     public private(set) var lastErrorMessage: String?
     public private(set) var activeWebsiteDomain: String?
+    /// Called after the engine selects an input source. macOS does not tell the selecting
+    /// process about its own switch, so listeners that cache the layout need this.
+    @ObservationIgnored public var onInputSourceActivated: ((String) -> Void)?
 
     nonisolated public static let layoutPilotBundleID = "com.velizard.LayoutPilot"
     nonisolated static let recentApplicationLimit = 4
@@ -430,7 +433,7 @@ public final class LayoutAutomationEngine {
         }
 
         do {
-            try inputSourceClient.activateInputSource(withID: profile.inputSourceID)
+            try activateInputSource(profile.inputSourceID)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -498,7 +501,7 @@ public final class LayoutAutomationEngine {
         }
 
         do {
-            try inputSourceClient.activateInputSource(withID: targetSourceID)
+            try activateInputSource(targetSourceID)
             rememberCurrentInputSource(targetSourceID, for: contextKey)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
@@ -542,6 +545,9 @@ public final class LayoutAutomationEngine {
             }
             SmartInputService.activatePreferredUSInputSource(using: inputSourceClient)
             let selectedSourceID = inputSourceClient.currentInputSourceID() ?? currentSourceID
+            if selectedSourceID != currentSourceID {
+                onInputSourceActivated?(selectedSourceID)
+            }
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: pane.hostBundleID,
@@ -608,7 +614,7 @@ public final class LayoutAutomationEngine {
         }
 
         do {
-            try inputSourceClient.activateInputSource(withID: profile.inputSourceID)
+            try activateInputSource(profile.inputSourceID)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -627,5 +633,10 @@ public final class LayoutAutomationEngine {
             ))
             lastErrorMessage = error.localizedDescription
         }
+    }
+
+    private func activateInputSource(_ sourceID: String) throws {
+        try inputSourceClient.activateInputSource(withID: sourceID)
+        onInputSourceActivated?(sourceID)
     }
 }
