@@ -14,7 +14,8 @@ final class LayoutPilotAppState {
 
     init() {
         self.store = LayoutPilotStore()
-        self.engine = LayoutAutomationEngine(store: store)
+        let herdrPaneMonitor = HerdrPaneMonitor()
+        self.engine = LayoutAutomationEngine(store: store, terminalPaneFocusProvider: herdrPaneMonitor)
         self.remotePrankPackService = RemotePrankPackService(store: store)
         self.launchAtLoginState = LaunchAtLoginService.currentState()
         store.changeHandler = { [weak self, weak engine] in
@@ -26,6 +27,10 @@ final class LayoutPilotAppState {
 
             // Sync launch at login
             self.launchAtLoginState = LaunchAtLoginService.sync(enabled: self.store.configuration.launchAtLogin)
+        }
+        herdrPaneMonitor.onChange = { [weak engine] focus in
+            SmartInputService.shared.updateTerminalPaneFocus(focus)
+            engine?.refreshNow()
         }
         engine.start()
         Self.syncSmartInputService(with: store.configuration)

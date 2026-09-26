@@ -318,7 +318,23 @@ public enum TextSnippetPolicy {
         in bundleID: String,
         groups: [TextSnippetGroup]
     ) -> Bool {
-        (snippet.allowsInRestrictedApplications || !securityExcludedBundleIDs.contains(bundleID))
+        allows(
+            snippet,
+            in: bundleID,
+            groups: groups,
+            isRestrictedContext: securityExcludedBundleIDs.contains(bundleID)
+        )
+    }
+
+    /// `isRestrictedContext` is normally whether `bundleID` is security-excluded. A herdr agent
+    /// pane inside an excluded terminal is not restricted: it is a chat prompt, not a shell.
+    public static func allows(
+        _ snippet: TextSnippet,
+        in bundleID: String,
+        groups: [TextSnippetGroup],
+        isRestrictedContext: Bool
+    ) -> Bool {
+        (snippet.allowsInRestrictedApplications || !isRestrictedContext)
             && snippet.isEnabled
             && effectiveScope(for: snippet, groups: groups).allows(bundleID: bundleID)
     }

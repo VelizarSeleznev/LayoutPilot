@@ -1155,6 +1155,61 @@ final class LayoutPilotCoreTests: XCTestCase {
         XCTAssertEqual(inputSourceClient.activatedSourceIDs, ["us", "us", "us"])
     }
 
+    func testHerdrPanesKeepSeparateLayoutsAndShellPanesGetUS() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
+        let us = InputLayoutProfile(name: "U.S.", inputSourceID: "com.apple.keylayout.US")
+        store.configuration = LayoutPilotConfiguration(
+            automationEnabled: true,
+            profiles: [us],
+            rules: [
+                ApplicationLayoutRule(
+                    applicationBundleID: "com.mitchellh.ghostty",
+                    applicationName: "Ghostty",
+                    profileID: us.id,
+                    target: .lastUsed
+                )
+            ]
+        )
+
+        let russian = "com.apple.keylayout.RussianWin"
+        let inputSourceClient = FakeInputSourceClient(currentSourceID: russian)
+        let panes = FakeTerminalPaneFocusProvider()
+        let ghostty = RecentApplicationContext(applicationName: "Ghostty", bundleID: "com.mitchellh.ghostty")
+        let engine = LayoutAutomationEngine(
+            store: store,
+            inputSourceClient: inputSourceClient,
+            terminalPaneFocusProvider: panes,
+            activeContextProvider: { ghostty }
+        )
+
+        panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p1", agent: "claude")
+        engine.refreshNow()
+        XCTAssertTrue(inputSourceClient.activatedSourceIDs.isEmpty, "first visit remembers the current layout")
+
+        panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p2", agent: "omp")
+        engine.refreshNow()
+        inputSourceClient.currentSourceID = "com.apple.keylayout.US"
+        engine.refreshNow()
+        XCTAssertTrue(inputSourceClient.activatedSourceIDs.isEmpty, "a manual switch inside a pane is not fought")
+
+        panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p1", agent: "claude")
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, [russian])
+
+        panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p3", agent: nil)
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, [russian, "com.apple.keylayout.US"])
+
+        panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p2", agent: "omp")
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, [russian, "com.apple.keylayout.US"], "already on its U.S.")
+
+        panes.focus = TerminalPaneFocus(hostBundleID: ghostty.bundleID, paneID: "w1:p1", agent: "claude")
+        engine.refreshNow()
+        XCTAssertEqual(inputSourceClient.activatedSourceIDs, [russian, "com.apple.keylayout.US", russian])
+    }
+
     func testApplicationActivationNotificationAppliesRuleForNewFrontmostApp() async throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let store = LayoutPilotStore(fileURL: tempDirectory.appendingPathComponent("configuration.json"))
@@ -2604,5 +2659,14 @@ private final class FakeInputSourceClient: InputSourceClient {
     func activateInputSource(withID inputSourceID: String) throws {
         activatedSourceIDs.append(inputSourceID)
         currentSourceID = inputSourceID
+    }
+}
+
+@MainActor
+private final class FakeTerminalPaneFocusProvider: TerminalPaneFocusProviding {
+    var focus: TerminalPaneFocus?
+
+    func terminalPaneFocus(forFrontmostBundleID bundleID: String) -> TerminalPaneFocus? {
+        focus?.hostBundleID == bundleID ? focus : nil
     }
 }

@@ -27,16 +27,20 @@ public final class LayoutAutomationEngine {
     )
     private var websiteLookupGeneration = 0
     private var monitoredBrowserBundleID: String?
-    private let browserActivityObserver = BrowserActivityObserver()
+    private let browserWindowObserver = WindowActivityObserver()
     /// Safety net for in-page navigation that never changes the window title. The accessibility
     /// observer covers everything else, so this can be slow and coalescible.
     private static let websiteFallbackPollInterval = 20
+    private let terminalPaneFocusProvider: TerminalPaneFocusProviding?
     private var previousBundleID: String?
-    private var lastUsedInputSourceByBundleID: [String: String] = [:]
+    /// The application, or the herdr pane inside it, whose layout is remembered next.
+    private var previousContextKey: String?
+    private var lastUsedInputSourceByContextKey: [String: String] = [:]
 
     public init(
         store: LayoutPilotStore,
         inputSourceClient: InputSourceClient = SystemInputSourceClient(),
+        terminalPaneFocusProvider: TerminalPaneFocusProviding? = nil,
         activeContextProvider: @escaping () -> RecentApplicationContext = {
             let application = NSWorkspace.shared.frontmostApplication
             return RecentApplicationContext(
@@ -47,6 +51,7 @@ public final class LayoutAutomationEngine {
     ) {
         self.store = store
         self.inputSourceClient = inputSourceClient
+        self.terminalPaneFocusProvider = terminalPaneFocusProvider
         self.activeContextProvider = activeContextProvider
     }
 
@@ -120,6 +125,9 @@ public final class LayoutAutomationEngine {
         let bundleID = activeContext.bundleID
         let appName = activeContext.applicationName
         let enteredNewContext = previousBundleID == nil || previousBundleID != bundleID
+        previousBundleID = bundleID
+        let paneFocus = terminalPaneFocusProvider?.terminalPaneFocus(forFrontmostBundleID: bundleID)
+        let contextKey = paneFocus?.contextKey ?? bundleID
 
         if enteredNewContext {
             activeWebsiteDomain = nil
@@ -139,13 +147,13 @@ public final class LayoutAutomationEngine {
             requestWebsiteDomainRefresh(for: activeContext)
         }
 
-        let shouldRestoreLastUsedInputSource = rememberLastUsedInputSource(
+        let enteredNewLayoutContext = rememberLastUsedInputSource(
             currentSourceID,
-            forPreviousBundleBeforeActivating: bundleID
+            forPreviousContextBeforeActivating: contextKey
         )
 
         guard store.configuration.isLayoutSwitchingActive else {
-            rememberCurrentInputSource(currentSourceID, for: bundleID)
+            rememberCurrentInputSource(currentSourceID, for: contextKey)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -172,6 +180,16 @@ public final class LayoutAutomationEngine {
             }
         }
 
+        if let paneFocus {
+            applyTerminalPaneRule(
+                paneFocus,
+                appName: appName,
+                currentSourceID: currentSourceID,
+                enteredPane: enteredNewLayoutContext
+            )
+            return
+        }
+
         guard let rule = store.effectiveRule(for: bundleID, applicationName: appName) else {
             rememberCurrentInputSource(currentSourceID, for: bundleID)
             publishSnapshot(AutomationSnapshot(
@@ -195,11 +213,12 @@ public final class LayoutAutomationEngine {
             )
         case .lastUsed:
             applyLastUsedRule(
-                rule,
+                description: "Matched \(rule.applicationName) -> Last Used",
+                contextKey: contextKey,
                 appName: appName,
                 bundleID: bundleID,
                 currentSourceID: currentSourceID,
-                shouldRestore: shouldRestoreLastUsedInputSource
+                shouldRestore: enteredNewLayoutContext
             )
         }
     }
@@ -231,30 +250,29 @@ public final class LayoutAutomationEngine {
         hasEnabledWebsiteRules && BrowserURLService.isBrowser(bundleID: bundleID)
     }
 
-    @discardableResult
+    /// Stores the layout the previous context was left on, and reports whether `contextKey`
+    /// is a different context from the previous one.
     private func rememberLastUsedInputSource(
         _ currentSourceID: String,
-        forPreviousBundleBeforeActivating activeBundleID: String
+        forPreviousContextBeforeActivating contextKey: String
     ) -> Bool {
-        let didActivateNewBundle = previousBundleID != nil && previousBundleID != activeBundleID
-        defer { previousBundleID = activeBundleID == "Unknown" ? previousBundleID : activeBundleID }
+        defer { previousContextKey = contextKey }
 
         guard currentSourceID != "Unknown",
-              let previousBundleID,
-              previousBundleID != activeBundleID else {
+              let previousContextKey,
+              previousContextKey != contextKey else {
             return false
         }
-
-        lastUsedInputSourceByBundleID[previousBundleID] = currentSourceID
-        return didActivateNewBundle
+        lastUsedInputSourceByContextKey[previousContextKey] = currentSourceID
+        return true
     }
 
-    private func rememberCurrentInputSource(_ currentSourceID: String, for bundleID: String) {
-        guard currentSourceID != "Unknown", bundleID != "Unknown" else {
+    private func rememberCurrentInputSource(_ currentSourceID: String, for contextKey: String) {
+        guard currentSourceID != "Unknown", contextKey != "Unknown" else {
             return
         }
 
-        lastUsedInputSourceByBundleID[bundleID] = currentSourceID
+        lastUsedInputSourceByContextKey[contextKey] = currentSourceID
     }
 
     private func rememberRecentApplication(applicationName: String, bundleID: String) {
@@ -292,7 +310,7 @@ public final class LayoutAutomationEngine {
 
         if let runningApplication = NSWorkspace.shared.frontmostApplication,
            runningApplication.bundleIdentifier == application.bundleID {
-            browserActivityObserver.start(pid: runningApplication.processIdentifier) { [weak self] in
+            browserWindowObserver.start(pid: runningApplication.processIdentifier) { [weak self] in
                 guard let self,
                       self.monitoredBrowserBundleID == application.bundleID else { return }
                 self.requestWebsiteDomainRefresh(for: application)
@@ -320,7 +338,7 @@ public final class LayoutAutomationEngine {
     }
 
     private func stopWebsiteMonitor() {
-        browserActivityObserver.stop()
+        browserWindowObserver.stop()
         websiteRefreshTimer?.cancel()
         websiteRefreshTimer = nil
         monitoredBrowserBundleID = nil
@@ -434,15 +452,15 @@ public final class LayoutAutomationEngine {
     }
 
     private func applyLastUsedRule(
-        _ rule: ApplicationLayoutRule,
+        description: String,
+        contextKey: String,
         appName: String,
         bundleID: String,
         currentSourceID: String,
         shouldRestore: Bool
     ) {
-        let description = "Matched \(rule.applicationName) -> Last Used"
         guard shouldRestore else {
-            rememberCurrentInputSource(currentSourceID, for: bundleID)
+            rememberCurrentInputSource(currentSourceID, for: contextKey)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -454,8 +472,8 @@ public final class LayoutAutomationEngine {
             return
         }
 
-        guard let targetSourceID = lastUsedInputSourceByBundleID[bundleID] else {
-            rememberCurrentInputSource(currentSourceID, for: bundleID)
+        guard let targetSourceID = lastUsedInputSourceByContextKey[contextKey] else {
+            rememberCurrentInputSource(currentSourceID, for: contextKey)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -481,7 +499,7 @@ public final class LayoutAutomationEngine {
 
         do {
             try inputSourceClient.activateInputSource(withID: targetSourceID)
-            rememberCurrentInputSource(targetSourceID, for: bundleID)
+            rememberCurrentInputSource(targetSourceID, for: contextKey)
             publishSnapshot(AutomationSnapshot(
                 frontmostApplicationName: appName,
                 frontmostBundleID: bundleID,
@@ -500,6 +518,49 @@ public final class LayoutAutomationEngine {
             ))
             lastErrorMessage = error.localizedDescription
         }
+    }
+
+    /// A herdr shell pane types commands, so it gets U.S. every time it gains focus. An agent
+    /// pane keeps whatever layout it was last left on, independently of the other panes.
+    private func applyTerminalPaneRule(
+        _ pane: TerminalPaneFocus,
+        appName: String,
+        currentSourceID: String,
+        enteredPane: Bool
+    ) {
+        guard let agent = pane.agent else {
+            let description = "herdr shell pane \(pane.paneID) -> U.S."
+            guard enteredPane else {
+                publishSnapshot(AutomationSnapshot(
+                    frontmostApplicationName: appName,
+                    frontmostBundleID: pane.hostBundleID,
+                    currentInputSourceID: currentSourceID,
+                    matchedRuleDescription: description,
+                    lastAction: "Kept current layout"
+                ))
+                return
+            }
+            SmartInputService.activatePreferredUSInputSource(using: inputSourceClient)
+            let selectedSourceID = inputSourceClient.currentInputSourceID() ?? currentSourceID
+            publishSnapshot(AutomationSnapshot(
+                frontmostApplicationName: appName,
+                frontmostBundleID: pane.hostBundleID,
+                currentInputSourceID: selectedSourceID,
+                matchedRuleDescription: description,
+                lastAction: selectedSourceID == currentSourceID ? "Already on U.S." : "Switched to U.S."
+            ))
+            lastErrorMessage = nil
+            return
+        }
+
+        applyLastUsedRule(
+            description: "herdr \(agent) pane \(pane.paneID) -> Last Used",
+            contextKey: pane.contextKey,
+            appName: appName,
+            bundleID: pane.hostBundleID,
+            currentSourceID: currentSourceID,
+            shouldRestore: enteredPane
+        )
     }
 
     private func applyWebsiteRule(

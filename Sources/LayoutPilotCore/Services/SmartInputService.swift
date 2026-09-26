@@ -41,6 +41,18 @@ public final class SmartInputService: @unchecked Sendable {
         var inputSourceID: String?
         var keyboardTextMap: KeyboardEventTextMap?
         var focusedElementKind: AXFocusedElementKind = .unknown
+        var terminalPane: TerminalPaneFocus?
+
+        /// The herdr pane whose agent prompt has the keyboard, if any. The pane is only trusted
+        /// while its terminal is still the frontmost application.
+        var agentPaneID: String? {
+            guard let terminalPane,
+                  terminalPane.isAgent,
+                  terminalPane.hostBundleID == bundleID else {
+                return nil
+            }
+            return terminalPane.paneID
+        }
     }
     
     private let excludedBundleIDs = TextSnippetPolicy.securityExcludedBundleIDs
@@ -175,6 +187,7 @@ public final class SmartInputService: @unchecked Sendable {
     private var dictationGestures = DictationGestureMachine()
     private var layoutBeforeDictationTap: String?
     private var eventRunLoop: CFRunLoop?
+    private var agentPrompt = AgentPromptTracker()
     
     public var isEnabled: Bool {
         get {
@@ -483,7 +496,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private var snippetIndex = SnippetIndex()
-    private var allowedSnippetsCacheBundleID: String?
+    private var allowedSnippetsCacheKey: (bundleID: String, isRestricted: Bool)?
     private var allowedSnippetIDs: Set<UUID> = []
 
     private func rebuildSnippetIndexLocked() {
@@ -500,25 +513,49 @@ public final class SmartInputService: @unchecked Sendable {
             }
         }
         snippetIndex = index
-        allowedSnippetsCacheBundleID = nil
+        allowedSnippetsCacheKey = nil
         allowedSnippetIDs = []
     }
 
-    /// The set of snippets usable in `bundleID`, cached because the frontmost app changes
-    /// orders of magnitude less often than keys are pressed.
+    /// The set of snippets usable in `bundleID`, cached because the frontmost app and herdr
+    /// pane change orders of magnitude less often than keys are pressed.
     private func allowedSnippetIDsLocked(for bundleID: String) -> Set<UUID> {
-        if allowedSnippetsCacheBundleID == bundleID {
+        let isRestricted = isSecurityExcludedLocked(bundleID)
+        if let key = allowedSnippetsCacheKey, key.bundleID == bundleID, key.isRestricted == isRestricted {
             return allowedSnippetIDs
         }
         let groups = _textSnippetGroups
         allowedSnippetIDs = Set(
             _textSnippets
                 .lazy
-                .filter { TextSnippetPolicy.allows($0, in: bundleID, groups: groups) }
+                .filter {
+                    TextSnippetPolicy.allows(
+                        $0,
+                        in: bundleID,
+                        groups: groups,
+                        isRestrictedContext: isRestricted
+                    )
+                }
                 .map(\.id)
         )
-        allowedSnippetsCacheBundleID = bundleID
+        allowedSnippetsCacheKey = (bundleID, isRestricted)
         return allowedSnippetIDs
+    }
+
+    /// Security-excluded terminals stay excluded, except for a herdr pane running a coding
+    /// agent: that prompt is chat text, while a plain shell can be asked for a password.
+    private func isSecurityExcluded(_ bundleID: String, in context: InputContextSnapshot) -> Bool {
+        excludedBundleIDs.contains(bundleID)
+            && !(context.bundleID == bundleID && context.agentPaneID != nil)
+    }
+
+    private func isSecurityExcludedLocked(_ bundleID: String) -> Bool {
+        isSecurityExcluded(bundleID, in: _inputContext)
+    }
+
+    private func isSecurityExcluded(_ bundleID: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return isSecurityExcludedLocked(bundleID)
     }
 
     private func isSnippetAllowedLocked(_ snippet: TextSnippet, bundleID: String?) -> Bool {
@@ -852,6 +889,35 @@ public final class SmartInputService: @unchecked Sendable {
         scheduleFocusedElementRefresh(expectedPID: processIdentifier)
     }
 
+    /// The herdr pane that owns the keyboard changed, or its agent started or exited.
+    public func updateTerminalPaneFocus(_ focus: TerminalPaneFocus?) {
+        precondition(Thread.isMainThread)
+        lock.lock()
+        let previous = _inputContext.terminalPane
+        _inputContext.terminalPane = focus
+        if previous?.paneID != focus?.paneID {
+            agentPrompt.focusChanged()
+        }
+        // An agent that just started in the focused pane shows an empty prompt.
+        if let focus, focus.isAgent, let previous, previous.paneID == focus.paneID, !previous.isAgent {
+            agentPrompt.markEmpty(paneID: focus.paneID)
+        }
+        lock.unlock()
+
+        guard previous != focus else { return }
+        resetTransientInputState()
+        recordTraceState(
+            "terminal_pane_changed",
+            details: [
+                "previousPane": previous?.paneID ?? "nil",
+                "previousAgent": previous?.agent ?? "nil",
+                "currentPane": focus?.paneID ?? "nil",
+                "currentAgent": focus?.agent ?? "nil",
+                "hostBundleID": focus?.hostBundleID ?? "nil",
+            ]
+        )
+    }
+
     private func installFocusObserver(for application: NSRunningApplication?) {
         precondition(Thread.isMainThread)
         if let focusObserver {
@@ -1099,6 +1165,12 @@ public final class SmartInputService: @unchecked Sendable {
         
         if event.getIntegerValueField(.eventSourceUserData) == magicEventTag {
             traceDecision = "pass_synthetic_layoutpilot_event"
+            // A replacement changes the prompt's length by an amount the tracker does not follow.
+            if let paneID = traceContext.agentPaneID {
+                lock.lock()
+                agentPrompt.markUnknown(paneID: paneID)
+                lock.unlock()
+            }
             return Unmanaged.passUnretained(event)
         }
         lock.lock()
@@ -1163,6 +1235,41 @@ public final class SmartInputService: @unchecked Sendable {
             setDeferredShortTokenConversion(nil)
             deactivateLastReplacement()
             return Unmanaged.passUnretained(event)
+        }
+
+        if let paneID = inputContext.agentPaneID {
+            let key = AgentPromptTracker.classify(keyCode: keyCode, flags: flags, text: traceRawText)
+            lock.lock()
+            let action = agentPrompt.handle(
+                key,
+                keyCode: keyCode,
+                flags: flags,
+                paneID: paneID,
+                sourceID: inputContext.inputSourceID,
+                usSourceIDs: usInputSources
+            )
+            lock.unlock()
+            switch action {
+            case .none:
+                break
+            case .insertSlash:
+                traceDecision = "agent_prompt_slash_command"
+                traceDisposition = "modified"
+                var slash = Array("/".utf16)
+                event.keyboardSetUnicodeString(stringLength: slash.count, unicodeString: &slash)
+                activatePreferredUSInputSource()
+                resetBuffer()
+                resetContextHistory()
+                editedWordTracker.reset()
+                setDeferredShortTokenConversion(nil)
+                deactivateLastReplacement()
+                return Unmanaged.passUnretained(event)
+            case .restoreLayout(let sourceID):
+                // The command word is not prose: nothing to convert or learn from it.
+                resetBuffer()
+                setDeferredShortTokenConversion(nil)
+                restoreLayoutAfterAgentCommand(sourceID)
+            }
         }
 
         // Intercept suggestions keys when panel is active
@@ -1768,7 +1875,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     func shouldCaptureTraceText(in context: InputContextSnapshot) -> Bool {
-        guard !excludedBundleIDs.contains(context.bundleID) else { return false }
+        guard !isSecurityExcluded(context.bundleID, in: context) else { return false }
         switch context.focusedElementKind {
         case .secureText, .nonText:
             return false
@@ -1784,7 +1891,7 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     func shouldCaptureTraceKeyIdentity(in context: InputContextSnapshot) -> Bool {
-        guard !excludedBundleIDs.contains(context.bundleID) else { return false }
+        guard !isSecurityExcluded(context.bundleID, in: context) else { return false }
         switch context.focusedElementKind {
         case .secureText, .unknown:
             // A key code plus layout and modifiers is enough to reconstruct secret text.
@@ -1987,6 +2094,12 @@ public final class SmartInputService: @unchecked Sendable {
             case .revertLayout:
                 revertLayoutForDictationGesture()
             case .command(let command):
+                // Dictated text reaches the prompt without key events the tracker could follow.
+                lock.lock()
+                if let paneID = _inputContext.agentPaneID {
+                    agentPrompt.markUnknown(paneID: paneID)
+                }
+                lock.unlock()
                 let callback = onDictationCommand
                 DispatchQueue.global(qos: .userInteractive).async {
                     callback?(command)
@@ -2034,6 +2147,15 @@ public final class SmartInputService: @unchecked Sendable {
             updateCachedInputSourceID(previous, reason: "dictation_gesture_reverted_layout")
         } catch {
             logger.error("Dictation gesture could not restore the layout: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func restoreLayoutAfterAgentCommand(_ sourceID: String) {
+        do {
+            try SystemInputSourceClient().activateInputSource(withID: sourceID)
+            updateCachedInputSourceID(sourceID, reason: "agent_command_layout_restored")
+        } catch {
+            logger.error("Could not restore the layout after an agent command: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -2141,7 +2263,7 @@ public final class SmartInputService: @unchecked Sendable {
         if isTextSnippetsAllowed(for: bundleID) {
             hasEligibleFeature = true
         } else {
-            guard !excludedBundleIDs.contains(bundleID),
+            guard !isSecurityExcluded(bundleID, in: context),
                   isDanishAllowed(for: bundleID) || isBilingualAllowed(for: bundleID),
                   let sourceID = context.inputSourceID else {
                 return false
@@ -2159,13 +2281,13 @@ public final class SmartInputService: @unchecked Sendable {
 
     /// Smart Danish input applies when globally allowed for all apps, or this app is allow-listed.
     func isDanishAllowed(for bundleID: String) -> Bool {
-        if excludedBundleIDs.contains(bundleID) { return false }
+        if isSecurityExcluded(bundleID) { return false }
         return isEnabled && (danishApplyToAll || allowedBundleIDs.contains(bundleID))
     }
 
     /// Smart RU/EN autocorrection applies when globally allowed for all apps, or this app is allow-listed.
     private func isBilingualAllowed(for bundleID: String) -> Bool {
-        if excludedBundleIDs.contains(bundleID) { return false }
+        if isSecurityExcluded(bundleID) { return false }
         return smartBilingualApplyToAll || smartBilingualAllowedBundleIDs.contains(bundleID)
     }
 

@@ -2,16 +2,16 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-/// Watches a browser for the events that can change its active URL.
+/// Watches an application's focused window: focus moving to another window, the window's
+/// title changing, or focus moving inside it. Changes are coalesced into one callback.
 ///
-/// Resolving the active URL is expensive: it costs an Apple Event round trip that wakes the
-/// browser process too. Polling for it on a timer meant paying that cost tens of thousands of
-/// times a day to observe a value that only changes when the user navigates or switches tabs.
-/// Both of those show up as accessibility notifications, so the lookup can be demand-driven
-/// instead, with the caller keeping a slow timer purely as a safety net for in-page navigation
-/// that never touches the window title.
+/// Browsers use it to resolve the active URL on demand instead of polling for it: that lookup
+/// costs an Apple Event round trip that wakes the browser process too, and navigation and tab
+/// switches both show up as these notifications. The caller keeps a slow timer purely as a
+/// safety net for in-page navigation that never touches the window title. Terminals use it to
+/// notice when the focused window becomes, or stops being, a herdr client.
 @MainActor
-final class BrowserActivityObserver {
+final class WindowActivityObserver {
     private let coalescingInterval: TimeInterval = 0.3
 
     private var observer: AXObserver?
@@ -46,7 +46,7 @@ final class BrowserActivityObserver {
         var created: AXObserver?
         let callback: AXObserverCallback = { _, _, _, refcon in
             guard let refcon else { return }
-            let observer = Unmanaged<BrowserActivityObserver>.fromOpaque(refcon)
+            let observer = Unmanaged<WindowActivityObserver>.fromOpaque(refcon)
                 .takeUnretainedValue()
             MainActor.assumeIsolated { observer.notificationFired() }
         }
