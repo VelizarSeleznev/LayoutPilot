@@ -14,9 +14,11 @@ public final class SmartInputService: @unchecked Sendable {
     /// Invoked after an instant Globe press successfully selects a new input source.
     /// The app layer is responsible for hopping to the main actor before showing UI.
     public var onInstantGlobeSwitch: (@Sendable (InputSourceInfo) -> Void)?
+    public var onDictationCommand: (@Sendable (DictationCommand) -> Void)?
 
     private let magicEventTag: Int64 = 0x44414E495348 // "DANISH"
     private let globeKeyCode: Int64 = 63
+    private static let eventTapWatchdogInterval: CFTimeInterval = 5.0
     private let logger = Logger(
         subsystem: "com.velizard.LayoutPilot",
         category: "SmartInputService"
@@ -170,6 +172,9 @@ public final class SmartInputService: @unchecked Sendable {
     private var _isEnabled = true
     private var _instantGlobeSwitchingEnabled = false
     private var globeKeyState = GlobeKeyStateMachine()
+    private var dictationGestures = DictationGestureMachine()
+    private var layoutBeforeDictationTap: String?
+    private var eventRunLoop: CFRunLoop?
     
     public var isEnabled: Bool {
         get {
@@ -446,6 +451,7 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _textSnippets = newValue
+            rebuildSnippetIndexLocked()
         }
     }
 
@@ -457,7 +463,67 @@ public final class SmartInputService: @unchecked Sendable {
         set {
             lock.lock(); defer { lock.unlock() }
             _textSnippetGroups = newValue
+            rebuildSnippetIndexLocked()
         }
+    }
+
+    /// Lookup tables rebuilt whenever the snippet configuration changes.
+    ///
+    /// Every keystroke asks whether the buffered token is a snippet trigger or a prefix of one.
+    /// Answering that by scanning the whole snippet list meant, per keystroke, resolving each
+    /// snippet's application scope from scratch — including building a `SnippetApplicationScope`,
+    /// which allocates a `Set` and sorts an array. With a real snippet library that dominated
+    /// the event tap callback and showed up as input latency.
+    private struct SnippetIndex {
+        /// Snippets whose trigger lowercases to the key, in configuration order.
+        var exactMatches: [String: [TextSnippet]] = [:]
+        /// Proper prefixes of every lowercased trigger, mapped to the snippets that could still
+        /// grow into them, in configuration order.
+        var continuations: [String: [TextSnippet]] = [:]
+    }
+
+    private var snippetIndex = SnippetIndex()
+    private var allowedSnippetsCacheBundleID: String?
+    private var allowedSnippetIDs: Set<UUID> = []
+
+    private func rebuildSnippetIndexLocked() {
+        var index = SnippetIndex()
+        for snippet in _textSnippets {
+            let normalized = snippet.trigger.lowercased()
+            guard !normalized.isEmpty else { continue }
+            index.exactMatches[normalized, default: []].append(snippet)
+
+            var prefix = ""
+            for character in normalized.dropLast() {
+                prefix.append(character)
+                index.continuations[prefix, default: []].append(snippet)
+            }
+        }
+        snippetIndex = index
+        allowedSnippetsCacheBundleID = nil
+        allowedSnippetIDs = []
+    }
+
+    /// The set of snippets usable in `bundleID`, cached because the frontmost app changes
+    /// orders of magnitude less often than keys are pressed.
+    private func allowedSnippetIDsLocked(for bundleID: String) -> Set<UUID> {
+        if allowedSnippetsCacheBundleID == bundleID {
+            return allowedSnippetIDs
+        }
+        let groups = _textSnippetGroups
+        allowedSnippetIDs = Set(
+            _textSnippets
+                .lazy
+                .filter { TextSnippetPolicy.allows($0, in: bundleID, groups: groups) }
+                .map(\.id)
+        )
+        allowedSnippetsCacheBundleID = bundleID
+        return allowedSnippetIDs
+    }
+
+    private func isSnippetAllowedLocked(_ snippet: TextSnippet, bundleID: String?) -> Bool {
+        guard let bundleID else { return snippet.isEnabled }
+        return allowedSnippetIDsLocked(for: bundleID).contains(snippet.id)
     }
 
     public var remoteSnippetIDs: Set<UUID> {
@@ -654,8 +720,35 @@ public final class SmartInputService: @unchecked Sendable {
             }
         }
         
+        workspaceNotificationTokens.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didLaunchApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication
+                if application?.bundleIdentifier == "com.anthropic.claudefordesktop" {
+                    self?.reassertEventTap()
+                }
+            }
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            // Sit in front of Claude's already-installed option double-tap listener.
+            self?.reassertEventTap()
+        }
+
         Thread.detachNewThread { [weak self] in
             self?.runEventLoop()
+        }
+    }
+
+    public func reassertEventTap() {
+        lock.lock()
+        let loop = eventRunLoop
+        lock.unlock()
+        if let loop {
+            CFRunLoopStop(loop)
         }
     }
 
@@ -846,6 +939,9 @@ public final class SmartInputService: @unchecked Sendable {
             logger.error("Failed to get smart input event tap run loop")
             return
         }
+        lock.lock()
+        eventRunLoop = runLoop
+        lock.unlock()
         
         while isStarted {
             if !AXIsProcessTrusted() {
@@ -881,15 +977,20 @@ public final class SmartInputService: @unchecked Sendable {
             self.eventTap = tap
             let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
             CFRunLoopAddSource(runLoop, runLoopSource, .commonModes)
+            // Backstop only: the common ways a tap dies (.tapDisabledByTimeout and
+            // .tapDisabledByUserInput) arrive through the tap callback itself and are handled
+            // in handleEvent. This covers the silent case, so it does not need to be precise —
+            // and at 1Hz with no tolerance it was forcing 86k uncoalesced wakeups a day.
             let watchdogTimer = CFRunLoopTimerCreateWithHandler(
                 kCFAllocatorDefault,
-                CFAbsoluteTimeGetCurrent() + 1.0,
-                1.0,
+                CFAbsoluteTimeGetCurrent() + Self.eventTapWatchdogInterval,
+                Self.eventTapWatchdogInterval,
                 0,
                 0
             ) { [weak self] _ in
                 self?.recoverEventTapIfNeeded(tap: tap, runLoop: runLoop)
             }
+            CFRunLoopTimerSetTolerance(watchdogTimer, Self.eventTapWatchdogInterval / 2)
             CFRunLoopAddTimer(runLoop, watchdogTimer, .commonModes)
 
             CGEvent.tapEnable(tap: tap, enable: true)
@@ -1000,6 +1101,9 @@ public final class SmartInputService: @unchecked Sendable {
             traceDecision = "pass_synthetic_layoutpilot_event"
             return Unmanaged.passUnretained(event)
         }
+        lock.lock()
+        dictationGestures.foreignKey()
+        lock.unlock()
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
@@ -1838,42 +1942,105 @@ public final class SmartInputService: @unchecked Sendable {
 
     private func handleGlobeFlagsChanged(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let isGlobeEvent = keyCode == globeKeyCode
-        let isDown = event.flags.contains(.maskSecondaryFn)
-        let action: GlobeKeyAction
-
-        lock.lock()
-        action = globeKeyState.handle(
-            isGlobeEvent: isGlobeEvent,
-            isDown: isDown,
-            isEnabled: _instantGlobeSwitchingEnabled
-        )
-        lock.unlock()
-
-        switch action {
-        case .passThrough:
-            return Unmanaged.passUnretained(event)
-        case .consume:
-            return nil
-        case .consumeAndCycle:
-            do {
-                if let selectedSource = try instantInputSourceCycler.cycleToNextSource() {
-                    updateCachedInputSourceID(
-                        selectedSource.sourceID,
-                        reason: "instant_globe_layout_activated"
-                    )
-                    onInstantGlobeSwitch?(selectedSource)
-                }
-            } catch {
-                logger.error("Instant Globe input-source switch failed: \(error.localizedDescription, privacy: .public)")
+        let now = Date().timeIntervalSinceReferenceDate
+        if keyCode == globeKeyCode {
+            let isDown = event.flags.contains(.maskSecondaryFn)
+            lock.lock()
+            let enabled = _instantGlobeSwitchingEnabled
+            let effects = enabled
+                ? dictationGestures.handleFn(isDown: isDown, at: now)
+                : []
+            if !enabled {
+                dictationGestures.reset()
             }
+            lock.unlock()
+            guard enabled else { return Unmanaged.passUnretained(event) }
+            applyDictationEffects(effects)
             return nil
+        }
+        if keyCode == 58 || keyCode == 61 {
+            let isDown = event.flags.contains(.maskAlternate)
+            let blocked: CGEventFlags = [.maskCommand, .maskShift, .maskControl, .maskSecondaryFn]
+            let alone = event.flags.intersection(blocked).isEmpty && (isDown ? event.flags.contains(.maskAlternate) : true)
+            lock.lock()
+            let effects = dictationGestures.handleOption(
+                keyCode: keyCode,
+                isDown: isDown,
+                isAlone: alone,
+                at: now
+            )
+            lock.unlock()
+            applyDictationEffects(effects)
+            return effects.contains(.consume) ? nil : Unmanaged.passUnretained(event)
+        }
+        lock.lock()
+        dictationGestures.foreignKey()
+        lock.unlock()
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func applyDictationEffects(_ effects: [DictationGestureEffect]) {
+        for effect in effects {
+            switch effect {
+            case .switchLayout:
+                switchLayoutForDictationGesture()
+            case .revertLayout:
+                revertLayoutForDictationGesture()
+            case .command(let command):
+                let callback = onDictationCommand
+                DispatchQueue.global(qos: .userInteractive).async {
+                    callback?(command)
+                }
+            case .armHold(let token):
+                let delay = DictationGestureMachine().holdThreshold
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.dictationHoldDeadline(token)
+                }
+            case .consume:
+                break
+            }
+        }
+    }
+
+    private func dictationHoldDeadline(_ token: UUID) {
+        let now = Date().timeIntervalSinceReferenceDate
+        lock.lock()
+        let effects = dictationGestures.holdFired(token: token, at: now)
+        lock.unlock()
+        applyDictationEffects(effects)
+    }
+
+    private func switchLayoutForDictationGesture() {
+        let previous = SystemInputSourceClient().currentInputSourceID()
+        do {
+            if let selectedSource = try instantInputSourceCycler.cycleToNextSource() {
+                layoutBeforeDictationTap = previous
+                updateCachedInputSourceID(
+                    selectedSource.sourceID,
+                    reason: "instant_globe_layout_activated"
+                )
+                onInstantGlobeSwitch?(selectedSource)
+            }
+        } catch {
+            logger.error("Instant Globe input-source switch failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func revertLayoutForDictationGesture() {
+        guard let previous = layoutBeforeDictationTap else { return }
+        layoutBeforeDictationTap = nil
+        do {
+            try SystemInputSourceClient().activateInputSource(withID: previous)
+            updateCachedInputSourceID(previous, reason: "dictation_gesture_reverted_layout")
+        } catch {
+            logger.error("Dictation gesture could not restore the layout: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     private func resetGlobeKeyState() {
         lock.lock()
         globeKeyState.reset()
+        dictationGestures.reset()
         lock.unlock()
     }
 
@@ -2003,19 +2170,18 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     func isTextSnippetsAllowed(for bundleID: String) -> Bool {
-        let groups = textSnippetGroups
-        return textSnippetsEnabled && textSnippets.contains {
-            TextSnippetPolicy.allows($0, in: bundleID, groups: groups)
-        }
+        lock.lock(); defer { lock.unlock() }
+        return _textSnippetsEnabled && !allowedSnippetIDsLocked(for: bundleID).isEmpty
     }
 
     func textSnippet(for token: String, bundleID: String? = nil) -> TextSnippet? {
-        let groups = textSnippetGroups
-        return textSnippets.first { snippet in
-            let allowed = bundleID.map {
-                TextSnippetPolicy.allows(snippet, in: $0, groups: groups)
-            } ?? snippet.isEnabled
-            return allowed && snippetMatches(snippet, token: token) && !snippet.replacement.isEmpty
+        guard !token.isEmpty else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        guard let candidates = snippetIndex.exactMatches[token.lowercased()] else { return nil }
+        return candidates.first { snippet in
+            isSnippetAllowedLocked(snippet, bundleID: bundleID)
+                && snippetMatches(snippet, token: token)
+                && !snippet.replacement.isEmpty
         }
     }
 
@@ -2134,12 +2300,12 @@ public final class SmartInputService: @unchecked Sendable {
         guard !token.isEmpty else {
             return false
         }
-        let groups = textSnippetGroups
-        return textSnippets.contains { snippet in
-            let allowed = bundleID.map {
-                TextSnippetPolicy.allows(snippet, in: $0, groups: groups)
-            } ?? snippet.isEnabled
-            guard allowed else { return false }
+        lock.lock(); defer { lock.unlock() }
+        // The index is keyed by lowercased prefixes, which is a superset of the case-sensitive
+        // matches, so case-sensitive snippets still get their exact check below.
+        guard let candidates = snippetIndex.continuations[token.lowercased()] else { return false }
+        return candidates.contains { snippet in
+            guard isSnippetAllowedLocked(snippet, bundleID: bundleID) else { return false }
             if snippet.isCaseSensitive {
                 return snippet.trigger.hasPrefix(token) && snippet.trigger != token
             }

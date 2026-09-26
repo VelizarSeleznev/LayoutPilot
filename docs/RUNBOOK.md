@@ -6,6 +6,16 @@
 ./script/build_and_run.sh
 ```
 
+This builds `Release`. The installed app runs all day holding an event tap, and a `-Onone`
+build of it measurably costs battery, so `Debug` is opt-in:
+
+```sh
+LAYOUTPILOT_CONFIGURATION=Debug ./script/build_and_run.sh
+```
+
+To tell them apart in an installed bundle, look in `Contents/MacOS`: a `Debug` build carries
+`LayoutPilot.debug.dylib` and `__preview.dylib` alongside the main binary.
+
 User-facing install instructions live in [INSTALL.md](INSTALL.md).
 
 ## Project artifacts

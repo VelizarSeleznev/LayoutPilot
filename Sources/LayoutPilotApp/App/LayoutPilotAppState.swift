@@ -45,6 +45,11 @@ final class LayoutPilotAppState {
                 GlobeSwitchIndicator.shared.show(source: source)
             }
         }
+        SmartInputService.shared.onDictationCommand = { command in
+            VibeReadDictationBridge.send(command)
+        }
+        VibeReadDictationBridge.startServer()
+        VibeReadDictationBridge.launchIfNeeded()
 
         // Suggestions panel callbacks
         SmartInputService.shared.onShowSuggestions = { @Sendable context in

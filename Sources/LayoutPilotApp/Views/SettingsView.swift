@@ -59,7 +59,7 @@ struct SettingsView: View {
                         ))
 
                         if appState.store.configuration.instantGlobeSwitchingEnabled {
-                            Text("Globe becomes a dedicated layout key. LayoutPilot switches on press and sets the macOS Globe action to Do Nothing, preventing a second system switch or voice input.")
+                            Text("A single Globe tap still switches layout the moment you release it. Double-tap Globe, or hold it, to dictate. Double-tap Option dictates too, and Claude no longer takes that shortcut.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 16)

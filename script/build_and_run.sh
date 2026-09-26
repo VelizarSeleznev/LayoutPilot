@@ -7,7 +7,10 @@ SCHEME="LayoutPilot"
 PROJECT_FILE="LayoutPilot.xcodeproj"
 DERIVED_DATA=".build"
 APP_NAME="LayoutPilot"
-APP_BUNDLE="$DERIVED_DATA/Build/Products/Debug/$APP_NAME.app"
+# Release by default: the installed app runs 24/7, and -Onone costs real battery.
+# Override with LAYOUTPILOT_CONFIGURATION=Debug when debugging.
+CONFIGURATION="${LAYOUTPILOT_CONFIGURATION:-Release}"
+APP_BUNDLE="$DERIVED_DATA/Build/Products/$CONFIGURATION/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 APP_ID="com.velizard.LayoutPilot"
 INSTALL_DIR="${LAYOUTPILOT_INSTALL_DIR:-/Applications}"
@@ -26,7 +29,7 @@ xcodegen
 xcodebuild \
   -project "$PROJECT_FILE" \
   -scheme "$SCHEME" \
-  -configuration Debug \
+  -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
   build
 

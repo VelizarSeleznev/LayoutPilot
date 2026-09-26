@@ -20,10 +20,15 @@ public final class SmartInputLearningStore: @unchecked Sendable {
 
     private var state: State
     private var saveScheduled = false
+    private var hasUnsavedChanges = false
     private let acceptedWordPromotionCount = 3
     private let rejectedConversionSuppressionCount = 2
     private let acceptedWordLimit = 2_000
-    private let persistenceDelay = 2.0
+    /// The full state is ~1 MB once `acceptedWordLimit` is reached, and every save re-encodes
+    /// and rewrites all of it. At a 2s debounce that meant a megabyte of JSON per two seconds
+    /// of continuous typing; the data is a learning cache, so a long debounce plus explicit
+    /// flushes on terminate/sleep loses nothing that matters.
+    private let persistenceDelay = 30.0
 
     public convenience init() {
         let url = (try? LayoutPilotPaths.smartInputLearningURL()) ??
@@ -35,7 +40,9 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         self.fileURL = fileURL
 
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // No .prettyPrinted / .sortedKeys: this file is machine-written and machine-read, and
+        // sorting the keys of every nested object dominated the encode cost in CPU profiles.
+        encoder.outputFormatting = []
         encoder.dateEncodingStrategy = .iso8601
         self.encoder = encoder
 
@@ -390,29 +397,70 @@ public final class SmartInputLearningStore: @unchecked Sendable {
         logger.info("Completed spelling bootstrap. Added \(addedCount) misspelled-but-user-approved words to local dictionary.")
     }
 
+    /// Writes any outstanding changes and does not return until they are on disk.
+    ///
+    /// Must not be called from `persistenceQueue`; the debounced path uses
+    /// `performDebouncedFlush()` instead, which already runs there.
     func flushPendingWrites() {
+        guard let snapshot = takeSnapshotForFlush() else { return }
+        persistenceQueue.sync { write(snapshot) }
+    }
+
+    /// Writes any outstanding changes before the process stops running.
+    ///
+    /// The debounce is deliberately long, so termination and sleep have to force the issue.
+    public func flushSynchronously() {
+        flushPendingWrites()
+    }
+
+    private func performDebouncedFlush() {
+        guard let snapshot = takeSnapshotForFlush() else { return }
+        write(snapshot)
+    }
+
+    private func takeSnapshotForFlush() -> State? {
         lock.lock()
         saveScheduled = false
-        saveLocked()
+        let snapshot = snapshotForWritingLocked()
         lock.unlock()
+        return snapshot
     }
 
     private func scheduleSaveLocked() {
+        hasUnsavedChanges = true
         guard !saveScheduled else { return }
         saveScheduled = true
         persistenceQueue.asyncAfter(deadline: .now() + persistenceDelay) { [weak self] in
-            self?.flushPendingWrites()
+            self?.performDebouncedFlush()
         }
     }
 
     private func saveLocked() {
+        guard let snapshot = snapshotForWritingLocked(force: true) else { return }
+        persistenceQueue.async { [weak self] in
+            self?.write(snapshot)
+        }
+    }
+
+    /// Prunes and takes a copy of the state to be encoded off-lock.
+    ///
+    /// `State` is a value type, so this is a cheap copy-on-write handoff. Encoding a megabyte
+    /// of JSON while still holding `lock` stalled the event tap, because every learned word
+    /// on the keystroke path has to take the same lock.
+    private func snapshotForWritingLocked(force: Bool = false) -> State? {
+        guard force || hasUnsavedChanges else { return nil }
+        pruneAcceptedWordsLocked()
+        hasUnsavedChanges = false
+        return state
+    }
+
+    private func write(_ snapshot: State) {
         do {
-            pruneAcceptedWordsLocked()
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let data = try encoder.encode(state)
+            let data = try encoder.encode(snapshot)
             try data.write(to: fileURL, options: [.atomic])
         } catch {
             logger.error("Failed to save smart-input learning store: \(error.localizedDescription, privacy: .public)")

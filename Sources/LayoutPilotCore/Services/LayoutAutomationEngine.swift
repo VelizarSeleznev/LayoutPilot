@@ -27,6 +27,10 @@ public final class LayoutAutomationEngine {
     )
     private var websiteLookupGeneration = 0
     private var monitoredBrowserBundleID: String?
+    private let browserActivityObserver = BrowserActivityObserver()
+    /// Safety net for in-page navigation that never changes the window title. The accessibility
+    /// observer covers everything else, so this can be slow and coalescible.
+    private static let websiteFallbackPollInterval = 20
     private var previousBundleID: String?
     private var lastUsedInputSourceByBundleID: [String: String] = [:]
 
@@ -285,11 +289,21 @@ public final class LayoutAutomationEngine {
 
         stopWebsiteMonitor()
         monitoredBrowserBundleID = application.bundleID
+
+        if let runningApplication = NSWorkspace.shared.frontmostApplication,
+           runningApplication.bundleIdentifier == application.bundleID {
+            browserActivityObserver.start(pid: runningApplication.processIdentifier) { [weak self] in
+                guard let self,
+                      self.monitoredBrowserBundleID == application.bundleID else { return }
+                self.requestWebsiteDomainRefresh(for: application)
+            }
+        }
+
         let timer = DispatchSource.makeTimerSource(queue: websiteLookupQueue)
         timer.schedule(
-            deadline: .now() + .seconds(2),
-            repeating: .seconds(2),
-            leeway: .milliseconds(500)
+            deadline: .now() + .seconds(Self.websiteFallbackPollInterval),
+            repeating: .seconds(Self.websiteFallbackPollInterval),
+            leeway: .seconds(5)
         )
         timer.setEventHandler { [weak self] in
             Task { @MainActor in
@@ -306,6 +320,7 @@ public final class LayoutAutomationEngine {
     }
 
     private func stopWebsiteMonitor() {
+        browserActivityObserver.stop()
         websiteRefreshTimer?.cancel()
         websiteRefreshTimer = nil
         monitoredBrowserBundleID = nil
