@@ -34,8 +34,8 @@ The active browser URL drives website rules, and resolving it costs an Apple Eve
 
 [herdr](https://herdr.dev) multiplexes shells and coding agents inside one terminal window, so the frontmost application alone says nothing about what receives keys. `HerdrPaneMonitor` fills that gap:
 
-- It only acts while a terminal in `hostBundleIDs` is frontmost and its focused window title starts with `herdr`; `WindowActivityObserver` re-checks the title when windows change.
-- It subscribes to `pane.focused`, `pane.agent_detected`, `pane.closed` and `pane.exited` on `~/.config/herdr/herdr.sock`, then reads `pane.list` once. The connection is held open on a background thread and reconnects with backoff while the window still says herdr. Nothing polls.
+- It only acts while a terminal in `hostBundleIDs` is frontmost and its focused window carries the title herdr writes; `WindowActivityObserver` re-checks the title when windows or titles change. The title comes from herdr's `[ui] window_title` template in `~/.config/herdr/config.toml` (default `{hostname}: {workspace}`, re-read when the file changes): `HerdrWindowTitleMatcher` matches `{hostname}` exactly and the other tokens as any text. A template that cannot identify herdr — empty (herdr leaves the title alone), only free-form tokens, or a string form `HerdrConfig` does not parse — matches no window, so herdr panes then get no special handling and shell panes stay excluded.
+- It subscribes to `pane.focused`, `pane.agent_detected`, `pane.closed` and `pane.exited` on `~/.config/herdr/herdr.sock`, then reads `pane.list` once. The connection is held open on a background thread and reconnects with backoff while the window is still herdr's. Nothing polls.
 - The reduced state is published on the main queue as a `TerminalPaneFocus` (pane ID, agent name or `nil` for a shell).
 
 Consumers:

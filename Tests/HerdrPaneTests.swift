@@ -205,11 +205,48 @@ final class HerdrProtocolTests: XCTestCase {
         state.apply(.paneRemoved(paneID: "w1:p2"))
         XCTAssertNil(state.focusedPane)
     }
+}
 
-    func testOnlyHerdrWindowsCount() {
-        XCTAssertTrue(HerdrPaneMonitor.isHerdrWindowTitle("herdr"))
-        XCTAssertFalse(HerdrPaneMonitor.isHerdrWindowTitle("~/Projects — zsh"))
-        XCTAssertFalse(HerdrPaneMonitor.isHerdrWindowTitle(nil))
+final class HerdrWindowTitleTests: XCTestCase {
+    func testDefaultTemplateRecognizesHerdrWindowsOnThisHostOnly() throws {
+        let matcher = try XCTUnwrap(HerdrWindowTitleMatcher(
+            template: HerdrWindowTitleMatcher.defaultTemplate,
+            hostname: "izarlion.local"
+        ))
+        XCTAssertTrue(matcher.matches("izarlion.local: SummerEngineWorkspace"))
+        XCTAssertTrue(matcher.matches("izarlion.local: ~"))
+        XCTAssertFalse(matcher.matches("~/Projects — zsh"))
+        XCTAssertFalse(matcher.matches("velizard@izarlion: ~"), "zsh's user@host title")
+        XCTAssertFalse(matcher.matches("other.local: SummerEngineWorkspace"))
+        XCTAssertFalse(matcher.matches("izarlionXlocal: ws"), "the host name is not a pattern")
+    }
+
+    func testCustomTemplatesKeepLiteralTextAndBraces() throws {
+        let matcher = try XCTUnwrap(HerdrWindowTitleMatcher(template: "herdr {{{tab}}} · {pane}", hostname: "h"))
+        XCTAssertTrue(matcher.matches("herdr {t1} · shell"))
+        XCTAssertFalse(matcher.matches("herdr t1 · shell"))
+        XCTAssertFalse(matcher.matches("zsh"))
+    }
+
+    func testTemplatesThatCannotIdentifyHerdrMatchNothing() {
+        XCTAssertNil(HerdrWindowTitleMatcher(template: "", hostname: "h"), "herdr leaves the title alone")
+        XCTAssertNil(HerdrWindowTitleMatcher(template: "{workspace}", hostname: "h"), "any title would match")
+        XCTAssertNil(HerdrWindowTitleMatcher(template: "{workspace} {terminal_title}", hostname: "h"))
+    }
+
+    func testReadsWindowTitleFromTheUITableOnly() {
+        XCTAssertEqual(HerdrConfig.windowTitle(inTOML: "[ui]\naccent = \"#c4a7e7\"\n"), .unset)
+        XCTAssertEqual(
+            HerdrConfig.windowTitle(inTOML: "[ui]\nwindow_title = \"herdr \\u00B7 {workspace}\" # set\n"),
+            .template("herdr · {workspace}")
+        )
+        XCTAssertEqual(HerdrConfig.windowTitle(inTOML: "[ui]\nwindow_title = ''\n"), .template(""))
+        XCTAssertEqual(
+            HerdrConfig.windowTitle(inTOML: "[theme]\nwindow_title = \"x\"\n[[keys.command]]\nwindow_title = \"y\"\n"),
+            .unset
+        )
+        XCTAssertEqual(HerdrConfig.windowTitle(inTOML: "[ui]\nwindow_title_extra = \"x\"\n"), .unset)
+        XCTAssertEqual(HerdrConfig.windowTitle(inTOML: "[ui]\nwindow_title = \"\"\"\nx\"\"\"\n"), .unreadable)
     }
 }
 

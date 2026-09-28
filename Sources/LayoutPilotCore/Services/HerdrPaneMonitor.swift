@@ -34,8 +34,8 @@ public protocol TerminalPaneFocusProviding: AnyObject {
 /// blocking read on a background thread, so an idle connection costs nothing. It is opened the
 /// first time a terminal's focused window is a herdr client and kept afterwards, so focus is
 /// already known when the terminal comes back to the front. The pane only counts while the
-/// frontmost terminal window is titled `herdr`: other windows of the same terminal are ordinary
-/// terminals.
+/// frontmost terminal window carries the title herdr writes (its `window_title` setting): other
+/// windows of the same terminal are ordinary terminals.
 @MainActor
 public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
     /// Terminals that can host a herdr client window.
@@ -46,9 +46,15 @@ public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
     ]
 
     nonisolated public static var defaultSocketPath: String {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/herdr/herdr.sock")
-            .path
+        herdrDirectory.appendingPathComponent("herdr.sock").path
+    }
+
+    nonisolated public static var defaultConfigPath: String {
+        herdrDirectory.appendingPathComponent("config.toml").path
+    }
+
+    nonisolated private static var herdrDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/herdr")
     }
 
     /// Called on the main queue after `focus` changes.
@@ -56,6 +62,10 @@ public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
     public private(set) var focus: TerminalPaneFocus?
 
     private let socketPath: String
+    private let configPath: String
+    /// The config's modification date and the template read from it.
+    private var configTemplate: (modified: Date?, template: String?)?
+    private var titleMatcher: HerdrWindowTitleMatcher?
     private let windowObserver = WindowActivityObserver()
     private var trackedBundleID: String?
     private var trackedPID: pid_t?
@@ -66,8 +76,12 @@ public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
     private var reconnectAttempt = 0
     private var reconnectWorkItem: DispatchWorkItem?
 
-    public init(socketPath: String = HerdrPaneMonitor.defaultSocketPath) {
+    public init(
+        socketPath: String = HerdrPaneMonitor.defaultSocketPath,
+        configPath: String = HerdrPaneMonitor.defaultConfigPath
+    ) {
         self.socketPath = socketPath
+        self.configPath = configPath
     }
 
     public func terminalPaneFocus(forFrontmostBundleID bundleID: String) -> TerminalPaneFocus? {
@@ -91,7 +105,7 @@ public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
             windowObserver.start(pid: pid) { [weak self] in
                 self?.refreshHostWindow()
             }
-            hostWindowIsHerdr = Self.isHerdrWindowTitle(Self.focusedWindowTitle(pid: pid))
+            hostWindowIsHerdr = isHerdrWindowTitle(Self.focusedWindowTitle(pid: pid))
             connectIfNeeded()
         }
         publish()
@@ -99,7 +113,7 @@ public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
 
     private func refreshHostWindow() {
         guard hostBundleID != nil, let trackedPID else { return }
-        hostWindowIsHerdr = Self.isHerdrWindowTitle(Self.focusedWindowTitle(pid: trackedPID))
+        hostWindowIsHerdr = isHerdrWindowTitle(Self.focusedWindowTitle(pid: trackedPID))
         connectIfNeeded()
         publish()
     }
@@ -158,8 +172,29 @@ public final class HerdrPaneMonitor: TerminalPaneFocusProviding {
         }
     }
 
-    nonisolated static func isHerdrWindowTitle(_ title: String?) -> Bool {
-        title?.lowercased().hasPrefix("herdr") == true
+    private func isHerdrWindowTitle(_ title: String?) -> Bool {
+        guard let title, let matcher = currentTitleMatcher() else { return false }
+        return matcher.matches(title)
+    }
+
+    /// The matcher for herdr's current `window_title`, rebuilt when the config file or host name changes.
+    private func currentTitleMatcher() -> HerdrWindowTitleMatcher? {
+        let modified = (try? FileManager.default.attributesOfItem(atPath: configPath))?[.modificationDate] as? Date
+        if configTemplate == nil || configTemplate?.modified != modified {
+            let text = modified == nil ? nil : try? String(contentsOfFile: configPath, encoding: .utf8)
+            let template: String? = switch text.map(HerdrConfig.windowTitle(inTOML:)) ?? .unset {
+            case .unset: HerdrWindowTitleMatcher.defaultTemplate
+            case .template(let template): template
+            case .unreadable: nil
+            }
+            configTemplate = (modified, template)
+        }
+        guard let template = configTemplate?.template else { return nil }
+        let hostname = HerdrWindowTitleMatcher.currentHostname()
+        if titleMatcher?.template != template || titleMatcher?.hostname != hostname {
+            titleMatcher = HerdrWindowTitleMatcher(template: template, hostname: hostname)
+        }
+        return titleMatcher
     }
 
     private static func focusedWindowTitle(pid: pid_t) -> String? {
