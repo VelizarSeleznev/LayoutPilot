@@ -20,6 +20,11 @@ enum DictationGestureEffect: Equatable {
 /// Holding Fn never switches layout: dictation runs until the key comes up.
 /// Double Option starts and stops dictation. Option chords are left alone.
 struct DictationGestureMachine {
+    var dictationEnabled: Bool
+
+    init(dictationEnabled: Bool = true) {
+        self.dictationEnabled = dictationEnabled
+    }
     var holdThreshold: TimeInterval = 0.34
     var doubleWindow: TimeInterval = 0.32
 
@@ -39,6 +44,17 @@ struct DictationGestureMachine {
 
     mutating func handleFn(isDown: Bool, at time: TimeInterval) -> [DictationGestureEffect] {
         cancelOptionTracking()
+        if !dictationEnabled {
+            if isDown {
+                phase = .fnDown(since: time, token: UUID())
+                return []
+            }
+            defer { phase = .idle }
+            if case .fnDown(let since, _) = phase, time - since < holdThreshold {
+                return [.switchLayout]
+            }
+            return []
+        }
         if isDown {
             switch phase {
             case .fnAwaitingSecond(let releasedAt) where time - releasedAt <= doubleWindow:
@@ -78,6 +94,7 @@ struct DictationGestureMachine {
     }
 
     mutating func holdFired(token: UUID, at time: TimeInterval) -> [DictationGestureEffect] {
+        guard dictationEnabled else { return [] }
         guard case .fnDown(let since, let armed) = phase, armed == token, holdToken == token else {
             return []
         }
@@ -92,6 +109,7 @@ struct DictationGestureMachine {
         isAlone: Bool,
         at time: TimeInterval
     ) -> [DictationGestureEffect] {
+        guard dictationEnabled else { return [] }
         if isDown {
             if case .swallowingOptionUp = phase {
                 return [.consume]

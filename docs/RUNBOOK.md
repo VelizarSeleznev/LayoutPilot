@@ -71,3 +71,16 @@ DMG is useful for local testing, but other Macs may show Gatekeeper warnings.
 - automatic input-source switching by frontmost bundle ID
 - UI for app rules and input profiles
 - placeholder LLM settings for future expansion
+
+### External global dictation (2026-09-28)
+
+LayoutPilot no longer auto-launches Vibe Read or forwards Fn/Option gestures to
+its control socket. With Instant Globe switching enabled, short Fn taps still
+switch the input source on release. Long Fn holds do not switch the source;
+Fn events pass through so the user's global dictation app can observe them.
+Double Option is also passed through. Another app may still bind that gesture.
+
+The gesture regression tests pass. The full 152-test run had one failure in
+`testBilingualConversionCorrectsDoubleInitialUppercaseAfterTranslation`
+(nil versus `Что`), outside the changed gesture path. Microphone transcription
+and insertion through ChatGPT require a live user check.

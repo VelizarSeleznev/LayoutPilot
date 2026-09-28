@@ -2,6 +2,20 @@ import XCTest
 @testable import LayoutPilotCore
 
 final class DictationGestureTests: XCTestCase {
+    func testExternalDictationKeepsShortFnTapsButNeverLaunchesVibeRead() {
+        var machine = DictationGestureMachine(dictationEnabled: false)
+        XCTAssertEqual(machine.handleFn(isDown: true, at: 1), [])
+        XCTAssertEqual(machine.handleFn(isDown: false, at: 1.1), [.switchLayout])
+        XCTAssertEqual(machine.handleFn(isDown: true, at: 1.2), [])
+        XCTAssertEqual(machine.handleFn(isDown: false, at: 1.3), [.switchLayout])
+        XCTAssertEqual(machine.handleFn(isDown: true, at: 2), [])
+        XCTAssertEqual(machine.handleFn(isDown: false, at: 3), [])
+        for time in [4.0, 4.2] {
+            XCTAssertEqual(machine.handleOption(keyCode: 58, isDown: true, isAlone: true, at: time), [])
+            XCTAssertEqual(machine.handleOption(keyCode: 58, isDown: false, isAlone: true, at: time + 0.1), [])
+        }
+    }
+
     func testSingleFnSwitchesOnReleaseWithoutDictation() {
         var machine = DictationGestureMachine()
 

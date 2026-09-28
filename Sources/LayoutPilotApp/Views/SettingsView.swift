@@ -59,7 +59,7 @@ struct SettingsView: View {
                         ))
 
                         if appState.store.configuration.instantGlobeSwitchingEnabled {
-                            Text("A single Globe tap still switches layout the moment you release it. Double-tap Globe, or hold it, to dictate. Double-tap Option dictates too, and Claude no longer takes that shortcut.")
+                            Text("A short Globe tap switches layout on release. Holding Globe is passed through to your global dictation app. LayoutPilot does not launch Vibe Read.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 16)

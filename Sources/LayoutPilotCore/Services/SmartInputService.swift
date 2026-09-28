@@ -184,7 +184,7 @@ public final class SmartInputService: @unchecked Sendable {
     private var _isEnabled = true
     private var _instantGlobeSwitchingEnabled = false
     private var globeKeyState = GlobeKeyStateMachine()
-    private var dictationGestures = DictationGestureMachine()
+    private var dictationGestures = DictationGestureMachine(dictationEnabled: false)
     private var layoutBeforeDictationTap: String?
     private var eventRunLoop: CFRunLoop?
     private var agentPrompt = AgentPromptTracker()
@@ -2069,7 +2069,8 @@ public final class SmartInputService: @unchecked Sendable {
             lock.unlock()
             guard enabled else { return Unmanaged.passUnretained(event) }
             applyDictationEffects(effects)
-            return nil
+            // Let the global dictation app observe Fn holds. LayoutPilot only handles short taps.
+            return Unmanaged.passUnretained(event)
         }
         if keyCode == 58 || keyCode == 61 {
             let isDown = event.flags.contains(.maskAlternate)

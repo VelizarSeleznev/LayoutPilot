@@ -53,11 +53,7 @@ final class LayoutPilotAppState {
                 GlobeSwitchIndicator.shared.show(source: source)
             }
         }
-        SmartInputService.shared.onDictationCommand = { command in
-            VibeReadDictationBridge.send(command)
-        }
-        VibeReadDictationBridge.startServer()
-        VibeReadDictationBridge.launchIfNeeded()
+        // Global dictation is owned by the user-selected app, not LayoutPilot.
 
         // Suggestions panel callbacks
         SmartInputService.shared.onShowSuggestions = { @Sendable context in
