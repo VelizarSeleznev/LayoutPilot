@@ -76,17 +76,11 @@ DMG is useful for local testing, but other Macs may show Gatekeeper warnings.
 
 LayoutPilot no longer auto-launches Vibe Read or forwards Fn/Option gestures to
 its control socket. With Instant Globe switching enabled, short Fn taps still
-switch the input source on release. Long Fn holds do not switch the source. After 350 ms LayoutPilot posts F18 down,
-and posts F18 up on release. Physical Fn events are consumed so short layout
-taps cannot show the dictation popup. ChatGPT hold-to-dictate must be set to F18
-in `~/.codex/keybindings.json`; restart ChatGPT after editing that file because
-its native global hotkey controller caches the binding. A backup of the prior
-keybindings is kept next to the file.
+switch the input source on release. Long Fn holds do not switch the source;
+Fn events pass through so the user's global dictation app can observe them.
 Double Option is also passed through. Another app may still bind that gesture.
 
-All nine gesture regression tests pass, including cancellation before the hold
-deadline and stopping dictation on release. The installed signed Release build
-uses the same bundle identifier and signing requirement as before. The full 152-test run had one failure in
+The gesture regression tests pass. The full 152-test run had one failure in
 `testBilingualConversionCorrectsDoubleInitialUppercaseAfterTranslation`
 (nil versus `Что`), outside the changed gesture path. Microphone transcription
 and insertion through ChatGPT require a live user check.

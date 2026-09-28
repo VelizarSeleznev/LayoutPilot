@@ -18,7 +18,6 @@ public final class SmartInputService: @unchecked Sendable {
 
     private let magicEventTag: Int64 = 0x44414E495348 // "DANISH"
     private let globeKeyCode: Int64 = 63
-    private var externalDictationKeyDown = false
     private static let eventTapWatchdogInterval: CFTimeInterval = 5.0
     private let logger = Logger(
         subsystem: "com.velizard.LayoutPilot",
@@ -185,7 +184,7 @@ public final class SmartInputService: @unchecked Sendable {
     private var _isEnabled = true
     private var _instantGlobeSwitchingEnabled = false
     private var globeKeyState = GlobeKeyStateMachine()
-    private var dictationGestures = DictationGestureMachine(dictationEnabled: false, externalHoldEnabled: true)
+    private var dictationGestures = DictationGestureMachine(dictationEnabled: false)
     private var layoutBeforeDictationTap: String?
     private var eventRunLoop: CFRunLoop?
     private var agentPrompt = AgentPromptTracker()
@@ -2070,8 +2069,8 @@ public final class SmartInputService: @unchecked Sendable {
             lock.unlock()
             guard enabled else { return Unmanaged.passUnretained(event) }
             applyDictationEffects(effects)
-            // Physical Fn is reserved for short layout taps; F18 starts external dictation after the hold threshold.
-            return nil
+            // Let the global dictation app observe Fn holds. LayoutPilot only handles short taps.
+            return Unmanaged.passUnretained(event)
         }
         if keyCode == 58 || keyCode == 61 {
             let isDown = event.flags.contains(.maskAlternate)
@@ -2108,10 +2107,9 @@ public final class SmartInputService: @unchecked Sendable {
                     agentPrompt.markUnknown(paneID: paneID)
                 }
                 lock.unlock()
-                switch command {
-                case .holdStart: postExternalDictationKey(isDown: true)
-                case .holdStop: postExternalDictationKey(isDown: false)
-                case .toggle: break
+                let callback = onDictationCommand
+                DispatchQueue.global(qos: .userInteractive).async {
+                    callback?(command)
                 }
             case .armHold(let token):
                 let delay = DictationGestureMachine().holdThreshold
@@ -2122,17 +2120,6 @@ public final class SmartInputService: @unchecked Sendable {
                 break
             }
         }
-    }
-
-    private func postExternalDictationKey(isDown: Bool) {
-        // F18 is the configured ChatGPT hold-to-dictate shortcut. Never include the physical Fn flag.
-        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 79, keyDown: isDown) else { return }
-        lock.lock()
-        externalDictationKeyDown = isDown
-        lock.unlock()
-        event.flags = []
-        event.setIntegerValueField(.eventSourceUserData, value: magicEventTag)
-        event.post(tap: .cghidEventTap)
     }
 
     private func dictationHoldDeadline(_ token: UUID) {
@@ -2183,9 +2170,7 @@ public final class SmartInputService: @unchecked Sendable {
         lock.lock()
         globeKeyState.reset()
         dictationGestures.reset()
-        let releaseExternalKey = externalDictationKeyDown
         lock.unlock()
-        if releaseExternalKey { postExternalDictationKey(isDown: false) }
     }
 
     static func shouldForceUSForSpotlight(keyCode: Int64, flags: CGEventFlags) -> Bool {

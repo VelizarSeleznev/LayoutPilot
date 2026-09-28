@@ -59,7 +59,7 @@ struct SettingsView: View {
                         ))
 
                         if appState.store.configuration.instantGlobeSwitchingEnabled {
-                            Text("A short Globe tap switches layout on release. Holding Globe for 350 ms sends F18 to your global dictation app. Set ChatGPT’s hold-to-dictate shortcut to F18.")
+                            Text("A short Globe tap switches layout on release. Holding Globe is passed through to your global dictation app. LayoutPilot does not launch Vibe Read.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(.leading, 16)
