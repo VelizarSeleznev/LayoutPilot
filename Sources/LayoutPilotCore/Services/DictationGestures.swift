@@ -22,10 +22,13 @@ enum DictationGestureEffect: Equatable {
 struct DictationGestureMachine {
     var dictationEnabled: Bool
 
-    init(dictationEnabled: Bool = true) {
+    var externalHoldEnabled: Bool
+
+    init(dictationEnabled: Bool = true, externalHoldEnabled: Bool = false) {
         self.dictationEnabled = dictationEnabled
+        self.externalHoldEnabled = externalHoldEnabled
     }
-    var holdThreshold: TimeInterval = 0.34
+    var holdThreshold: TimeInterval = 0.35
     var doubleWindow: TimeInterval = 0.32
 
     private enum Phase: Equatable {
@@ -46,10 +49,15 @@ struct DictationGestureMachine {
         cancelOptionTracking()
         if !dictationEnabled {
             if isDown {
-                phase = .fnDown(since: time, token: UUID())
-                return []
+                let token = UUID()
+                phase = .fnDown(since: time, token: token)
+                holdToken = token
+                return externalHoldEnabled ? [.armHold(token)] : []
             }
-            defer { phase = .idle }
+            defer { phase = .idle; holdToken = nil }
+            if case .fnHolding = phase {
+                return [.command(.holdStop)]
+            }
             if case .fnDown(let since, _) = phase, time - since < holdThreshold {
                 return [.switchLayout]
             }
@@ -94,7 +102,7 @@ struct DictationGestureMachine {
     }
 
     mutating func holdFired(token: UUID, at time: TimeInterval) -> [DictationGestureEffect] {
-        guard dictationEnabled else { return [] }
+        guard dictationEnabled || externalHoldEnabled else { return [] }
         guard case .fnDown(let since, let armed) = phase, armed == token, holdToken == token else {
             return []
         }

@@ -16,6 +16,21 @@ final class DictationGestureTests: XCTestCase {
         }
     }
 
+    func testExternalHoldWaitsAndReleasesWithoutSwitchingLayout() {
+        var machine = DictationGestureMachine(dictationEnabled: false, externalHoldEnabled: true)
+        let token = holdToken(from: machine.handleFn(isDown: true, at: 10))
+        XCTAssertEqual(machine.holdFired(token: token, at: 10.2), [])
+        XCTAssertEqual(machine.holdFired(token: token, at: 10.35), [.command(.holdStart)])
+        XCTAssertEqual(machine.handleFn(isDown: false, at: 11), [.command(.holdStop)])
+    }
+
+    func testExternalShortTapCancelsPendingDictation() {
+        var machine = DictationGestureMachine(dictationEnabled: false, externalHoldEnabled: true)
+        let token = holdToken(from: machine.handleFn(isDown: true, at: 10))
+        XCTAssertEqual(machine.handleFn(isDown: false, at: 10.1), [.switchLayout])
+        XCTAssertEqual(machine.holdFired(token: token, at: 10.4), [])
+    }
+
     func testSingleFnSwitchesOnReleaseWithoutDictation() {
         var machine = DictationGestureMachine()
 
