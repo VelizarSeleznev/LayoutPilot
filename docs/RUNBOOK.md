@@ -84,3 +84,12 @@ The gesture regression tests pass. The full 152-test run had one failure in
 `testBilingualConversionCorrectsDoubleInitialUppercaseAfterTranslation`
 (nil versus `Что`), outside the changed gesture path. Microphone transcription
 and insertion through ChatGPT require a live user check.
+
+### Direct Control dictation (2026-09-28)
+
+The delayed Fn-to-F18 experiment was reverted after the user reported that
+holding Fn did nothing. ChatGPT hold-to-dictate is now configured as
+`LeftControl` in `~/.codex/keybindings.json`. Restart ChatGPT to reload its
+native shortcut. LayoutPilot retains short Fn layout switching and does not
+launch Vibe Read or synthesize dictation keys. The live Control recording path
+needs verification after ChatGPT restarts.
