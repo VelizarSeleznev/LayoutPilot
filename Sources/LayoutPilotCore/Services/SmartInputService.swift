@@ -3,6 +3,7 @@ import Carbon
 import CoreGraphics
 import Foundation
 import OSLog
+import os
 
 public final class SmartInputService: @unchecked Sendable {
     public static let shared = SmartInputService()
@@ -18,7 +19,13 @@ public final class SmartInputService: @unchecked Sendable {
 
     private let magicEventTag: Int64 = 0x44414E495348 // "DANISH"
     private let globeKeyCode: Int64 = 63
-    private static let eventTapWatchdogInterval: CFTimeInterval = 5.0
+    private static let eventTapWatchdogInterval: TimeInterval = 5.0
+    /// macOS disables a tap after roughly a second without an answer; act a little later.
+    private static let stuckCallbackThresholdNanoseconds: UInt64 = 1_500_000_000
+    private static let eventTapReassertMinimumInterval: TimeInterval = 10
+    public static let reassertEventTapNotification = Notification.Name(
+        "com.velizard.LayoutPilot.reassertEventTap"
+    )
     private let logger = Logger(
         subsystem: "com.velizard.LayoutPilot",
         category: "SmartInputService"
@@ -187,6 +194,25 @@ public final class SmartInputService: @unchecked Sendable {
     private var dictationGestures = DictationGestureMachine(dictationEnabled: false)
     private var layoutBeforeDictationTap: String?
     private var eventRunLoop: CFRunLoop?
+    private var eventTapCreatedAt: Date?
+    private var eventTapGeneration = 0
+    /// A recreate was requested and the tap thread has not built the new tap yet.
+    private var eventTapReassertPending = false
+    /// Uptime (ns) at which the current tap callback began, 0 while idle. Read by the watchdog.
+    private let callbackStartedAt = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+    private let tapWatchdogQueue = DispatchQueue(
+        label: "com.velizard.LayoutPilot.event-tap-watchdog",
+        qos: .utility
+    )
+    private var tapWatchdogTimer: DispatchSourceTimer?
+    /// Only touched on tapWatchdogQueue.
+    private var tapDisabledForStuckCallback = false
+    /// Text Input Sources calls can stall on IPC, so they never run on the event-tap thread.
+    /// Serial, so layout switches keep their order.
+    private let inputSourceQueue = DispatchQueue(
+        label: "com.velizard.LayoutPilot.input-source",
+        qos: .userInteractive
+    )
     private var agentPrompt = AgentPromptTracker()
     
     public var isEnabled: Bool {
@@ -765,27 +791,30 @@ public final class SmartInputService: @unchecked Sendable {
             ) { [weak self] notification in
                 let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
                     as? NSRunningApplication
+                // Claude installs its own Option double-tap listener at launch; recreate the
+                // tap once so it sits in front of it. The tap created below already sits in
+                // front of listeners that exist now, so there is no reassert at startup.
                 if application?.bundleIdentifier == "com.anthropic.claudefordesktop" {
-                    self?.reassertEventTap()
+                    self?.reassertEventTap(reason: "claude_launched")
                 }
             }
         )
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            // Sit in front of Claude's already-installed option double-tap listener.
-            self?.reassertEventTap()
-        }
 
+        // Lets a local script exercise the recreate path (see docs/RUNBOOK.md). Coalesced like
+        // every other reassert, so it cannot multiply taps.
+        distributedNotificationTokens.append(
+            DistributedNotificationCenter.default().addObserver(
+                forName: Self.reassertEventTapNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reassertEventTap(reason: "distributed_notification")
+            }
+        )
+
+        startEventTapWatchdog()
         Thread.detachNewThread { [weak self] in
             self?.runEventLoop()
-        }
-    }
-
-    public func reassertEventTap() {
-        lock.lock()
-        let loop = eventRunLoop
-        lock.unlock()
-        if let loop {
-            CFRunLoopStop(loop)
         }
     }
 
@@ -1006,6 +1035,15 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
     
+    // MARK: - Event tap lifecycle
+    //
+    // The process owns at most one keyboard tap at a time. When macOS disables it
+    // (.tapDisabledByTimeout / .tapDisabledByUserInput) it is re-enabled in place. It is only
+    // recreated deliberately (Claude launched, or the Mach port died), and the old tap is always
+    // disabled, removed from the run loop and invalidated first. Until 2026-09-30 a recreate only
+    // removed the run-loop source: WindowServer kept every old, unserviced tap in the keyboard
+    // chain and waited on each of them per keystroke until the whole keyboard stopped responding.
+
     private func runEventLoop() {
         guard let runLoop = CFRunLoopGetCurrent() else {
             logger.error("Failed to get smart input event tap run loop")
@@ -1014,23 +1052,25 @@ public final class SmartInputService: @unchecked Sendable {
         lock.lock()
         eventRunLoop = runLoop
         lock.unlock()
-        
+
         while isStarted {
             if !AXIsProcessTrusted() {
                 Thread.sleep(forTimeInterval: 5)
                 continue
             }
-            
+
             let callback: CGEventTapCallBack = { _, type, event, refcon in
                 guard let refcon else {
                     return Unmanaged.passUnretained(event)
                 }
                 let service = Unmanaged<SmartInputService>.fromOpaque(refcon).takeUnretainedValue()
+                service.eventTapCallbackStarted()
+                defer { service.eventTapCallbackFinished() }
                 return service.handleEvent(type: type, event: event)
             }
-            
+
             let selfOpaque = Unmanaged.passUnretained(self).toOpaque()
-            
+
             let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
                 | CGEventMask(1 << CGEventType.flagsChanged.rawValue)
             guard let tap = CGEvent.tapCreate(
@@ -1045,40 +1085,188 @@ public final class SmartInputService: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: 5)
                 continue
             }
-            
-            self.eventTap = tap
-            let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(runLoop, runLoopSource, .commonModes)
-            // Backstop only: the common ways a tap dies (.tapDisabledByTimeout and
-            // .tapDisabledByUserInput) arrive through the tap callback itself and are handled
-            // in handleEvent. This covers the silent case, so it does not need to be precise —
-            // and at 1Hz with no tolerance it was forcing 86k uncoalesced wakeups a day.
-            let watchdogTimer = CFRunLoopTimerCreateWithHandler(
-                kCFAllocatorDefault,
-                CFAbsoluteTimeGetCurrent() + Self.eventTapWatchdogInterval,
-                Self.eventTapWatchdogInterval,
-                0,
-                0
-            ) { [weak self] _ in
-                self?.recoverEventTapIfNeeded(tap: tap, runLoop: runLoop)
+            guard let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+                logger.error("Failed to create smart input event tap run loop source")
+                CGEvent.tapEnable(tap: tap, enable: false)
+                CFMachPortInvalidate(tap)
+                Thread.sleep(forTimeInterval: 5)
+                continue
             }
-            CFRunLoopTimerSetTolerance(watchdogTimer, Self.eventTapWatchdogInterval / 2)
-            CFRunLoopAddTimer(runLoop, watchdogTimer, .commonModes)
+
+            CFRunLoopAddSource(runLoop, runLoopSource, .commonModes)
+            lock.lock()
+            eventTap = tap
+            eventTapCreatedAt = Date()
+            eventTapGeneration += 1
+            eventTapReassertPending = false
+            let generation = eventTapGeneration
+            lock.unlock()
 
             CGEvent.tapEnable(tap: tap, enable: true)
-            logger.info("Smart input event tap started")
-            recordTraceState("event_tap_started")
-            
+            logger.info("Smart input event tap started (generation \(generation, privacy: .public))")
+            recordTraceState("event_tap_started", details: ["generation": String(generation)])
+
             CFRunLoopRun()
 
-            CFRunLoopTimerInvalidate(watchdogTimer)
-            CFRunLoopRemoveSource(runLoop, runLoopSource, .commonModes)
-            if self.eventTap === tap {
-                self.eventTap = nil
-            }
+            tearDownEventTap(tap, runLoopSource: runLoopSource, runLoop: runLoop)
         }
     }
-    
+
+    /// Removes `tap` from WindowServer's event chain for good. Removing only the run-loop source
+    /// leaves an enabled tap that nobody services, and every keystroke waits for it to time out.
+    private func tearDownEventTap(_ tap: CFMachPort, runLoopSource: CFRunLoopSource, runLoop: CFRunLoop) {
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFRunLoopRemoveSource(runLoop, runLoopSource, .commonModes)
+        CFRunLoopSourceInvalidate(runLoopSource)
+        CFMachPortInvalidate(tap)
+        lock.lock()
+        if eventTap === tap {
+            eventTap = nil
+        }
+        lock.unlock()
+        recordTraceState("event_tap_torn_down")
+    }
+
+    private func currentEventTap() -> CFMachPort? {
+        lock.lock(); defer { lock.unlock() }
+        return eventTap
+    }
+
+    private func eventTapCallbackStarted() {
+        let now = DispatchTime.now().uptimeNanoseconds
+        callbackStartedAt.withLock { $0 = now }
+    }
+
+    private func eventTapCallbackFinished() {
+        callbackStartedAt.withLock { $0 = 0 }
+    }
+
+    /// Recreates the tap so it sits at the head of the chain again (in front of listeners that
+    /// were installed after it). Coalesced: a burst of requests produces at most one recreate.
+    public func reassertEventTap(reason: String = "requested") {
+        lock.lock()
+        let loop = eventRunLoop
+        let hasTap = eventTap != nil
+        let age = eventTapCreatedAt.map { Date().timeIntervalSince($0) } ?? .infinity
+        let alreadyPending = eventTapReassertPending
+        let shouldReassert = loop != nil && hasTap && !alreadyPending
+            && age >= Self.eventTapReassertMinimumInterval
+        if shouldReassert {
+            eventTapReassertPending = true
+        }
+        lock.unlock()
+        guard let loop, hasTap else { return }
+        guard shouldReassert else {
+            recordTraceState(
+                "event_tap_reassert_skipped",
+                details: [
+                    "reason": reason,
+                    "tapAgeSeconds": String(format: "%.1f", age),
+                    "pending": String(alreadyPending),
+                ]
+            )
+            return
+        }
+        recordTraceState("event_tap_reassert", details: ["reason": reason])
+        CFRunLoopStop(loop)
+    }
+
+    private func startEventTapWatchdog() {
+        let timer = DispatchSource.makeTimerSource(queue: tapWatchdogQueue)
+        timer.schedule(
+            deadline: .now() + Self.eventTapWatchdogInterval,
+            repeating: Self.eventTapWatchdogInterval,
+            leeway: .milliseconds(Int(Self.eventTapWatchdogInterval * 500))
+        )
+        timer.setEventHandler { [weak self] in
+            self?.checkEventTapHealth()
+        }
+        tapWatchdogTimer = timer
+        timer.resume()
+    }
+
+    /// Runs off the tap thread, so it still works when the tap callback is stuck.
+    private func checkEventTapHealth() {
+        guard isStarted else { return }
+        let tap = currentEventTap()
+
+        // 1. A callback that does not return holds every keystroke in the system. Take the tap out
+        //    of the chain until the callback finishes, then put it back.
+        let startedAt = callbackStartedAt.withLock { $0 }
+        let now = DispatchTime.now().uptimeNanoseconds
+        if let tap, startedAt != 0, now > startedAt,
+           now - startedAt > Self.stuckCallbackThresholdNanoseconds {
+            if !tapDisabledForStuckCallback {
+                tapDisabledForStuckCallback = true
+                CGEvent.tapEnable(tap: tap, enable: false)
+                let stuckMs = (now - startedAt) / 1_000_000
+                logger.error("Smart input event tap callback stuck for \(stuckMs, privacy: .public) ms; tap disabled so the keyboard keeps working")
+                recordTraceState("event_tap_callback_stuck_disabled", details: ["stuckMilliseconds": String(stuckMs)])
+            }
+            return
+        }
+        if tapDisabledForStuckCallback {
+            tapDisabledForStuckCallback = false
+            if let tap, CFMachPortIsValid(tap) {
+                CGEvent.tapEnable(tap: tap, enable: true)
+                logger.warning("Smart input event tap callback recovered; tap re-enabled")
+                recordTraceState("event_tap_callback_recovered_reenable")
+            }
+        }
+
+        // 2. A dead Mach port cannot be re-enabled: let the tap thread tear it down and recreate.
+        if let tap, !CFMachPortIsValid(tap) {
+            resetGlobeKeyState()
+            logger.error("Smart input event tap became invalid; recreating")
+            recordTraceState("event_tap_invalid_recreate")
+            lock.lock()
+            let loop = eventRunLoop
+            lock.unlock()
+            if let loop { CFRunLoopStop(loop) }
+            return
+        }
+
+        // 3. Disabled without a callback telling us.
+        if let tap, !CGEvent.tapIsEnabled(tap: tap) {
+            resetGlobeKeyState()
+            logger.warning("Smart input event tap was disabled without callback; re-enabling")
+            recordTraceState("event_tap_silently_disabled_reenable")
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+
+        // 4. Count what WindowServer actually holds for this process: never more than one tap.
+        let owned = Self.eventTapsOwnedByCurrentProcess()
+        let expected = tap == nil ? 0 : 1
+        if owned.count != expected {
+            let enabled = owned.filter(\.enabled).count
+            let worstLatency = owned.map(\.avgUsecLatency).max() ?? 0
+            logger.error("Smart input event tap anomaly: process owns \(owned.count, privacy: .public) taps (\(enabled, privacy: .public) enabled), expected \(expected, privacy: .public)")
+            recordTraceState(
+                "event_tap_count_anomaly",
+                details: [
+                    "owned": String(owned.count),
+                    "enabled": String(enabled),
+                    "expected": String(expected),
+                    "worstAvgLatencyMicroseconds": String(Int(worstLatency)),
+                ]
+            )
+        }
+    }
+
+    static func eventTapsOwnedByCurrentProcess() -> [CGEventTapInformation] {
+        var count: UInt32 = 0
+        guard CGGetEventTapList(0, nil, &count) == .success, count > 0 else { return [] }
+        var taps = [CGEventTapInformation](repeating: CGEventTapInformation(), count: Int(count))
+        guard CGGetEventTapList(count, &taps, &count) == .success else { return [] }
+        let pid = getpid()
+        return taps.prefix(Int(count)).filter { $0.tappingProcess == pid }
+    }
+
+    /// Test hook: the number of taps this process holds, per WindowServer.
+    public var ownedEventTapCount: Int {
+        Self.eventTapsOwnedByCurrentProcess().count
+    }
+
     private func requestAccessibilityPermissionIfNeeded() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
@@ -2025,32 +2213,10 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func recoverEventTapAfterDisable(reason: String) {
-        guard let eventTap else { return }
+        guard let eventTap = currentEventTap() else { return }
         logger.warning("Smart input event tap disabled by \(reason, privacy: .public); re-enabling")
         recordTraceState("event_tap_disabled_reenable", details: ["reason": reason])
         CGEvent.tapEnable(tap: eventTap, enable: true)
-    }
-
-    private func recoverEventTapIfNeeded(tap: CFMachPort, runLoop: CFRunLoop) {
-        guard isStarted else {
-            CFRunLoopStop(runLoop)
-            return
-        }
-
-        guard CFMachPortIsValid(tap) else {
-            resetGlobeKeyState()
-            logger.error("Smart input event tap became invalid; recreating")
-            recordTraceState("event_tap_invalid_recreate")
-            CFRunLoopStop(runLoop)
-            return
-        }
-
-        if !CGEvent.tapIsEnabled(tap: tap) {
-            resetGlobeKeyState()
-            logger.warning("Smart input event tap was disabled without callback; re-enabling")
-            recordTraceState("event_tap_silently_disabled_reenable")
-            CGEvent.tapEnable(tap: tap, enable: true)
-        }
     }
 
     private func handleGlobeFlagsChanged(_ event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -2097,9 +2263,13 @@ public final class SmartInputService: @unchecked Sendable {
         for effect in effects {
             switch effect {
             case .switchLayout:
-                switchLayoutForDictationGesture()
+                inputSourceQueue.async { [weak self] in
+                    self?.switchLayoutForDictationGesture()
+                }
             case .revertLayout:
-                revertLayoutForDictationGesture()
+                inputSourceQueue.async { [weak self] in
+                    self?.revertLayoutForDictationGesture()
+                }
             case .command(let command):
                 // Dictated text reaches the prompt without key events the tracker could follow.
                 lock.lock()
@@ -2130,6 +2300,7 @@ public final class SmartInputService: @unchecked Sendable {
         applyDictationEffects(effects)
     }
 
+    /// Runs on inputSourceQueue, which also owns layoutBeforeDictationTap.
     private func switchLayoutForDictationGesture() {
         let previous = SystemInputSourceClient().currentInputSourceID()
         do {
@@ -2158,11 +2329,14 @@ public final class SmartInputService: @unchecked Sendable {
     }
 
     private func restoreLayoutAfterAgentCommand(_ sourceID: String) {
-        do {
-            try SystemInputSourceClient().activateInputSource(withID: sourceID)
-            updateCachedInputSourceID(sourceID, reason: "agent_command_layout_restored")
-        } catch {
-            logger.error("Could not restore the layout after an agent command: \(error.localizedDescription, privacy: .public)")
+        inputSourceQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                try SystemInputSourceClient().activateInputSource(withID: sourceID)
+                self.updateCachedInputSourceID(sourceID, reason: "agent_command_layout_restored")
+            } catch {
+                self.logger.error("Could not restore the layout after an agent command: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 
@@ -2210,15 +2384,19 @@ public final class SmartInputService: @unchecked Sendable {
         }
     }
 
+    /// Called from the tap callback: the TIS work happens on inputSourceQueue.
     private func activatePreferredUSInputSource() {
-        let client = SystemInputSourceClient()
-        Self.activatePreferredUSInputSource(using: client)
-        if let selectedSourceID = client.currentInputSourceID(),
-           usInputSources.contains(selectedSourceID) {
-            updateCachedInputSourceID(
-                selectedSourceID,
-                reason: "forced_us_layout_activated"
-            )
+        inputSourceQueue.async { [weak self] in
+            guard let self else { return }
+            let client = SystemInputSourceClient()
+            Self.activatePreferredUSInputSource(using: client)
+            if let selectedSourceID = client.currentInputSourceID(),
+               self.usInputSources.contains(selectedSourceID) {
+                self.updateCachedInputSourceID(
+                    selectedSourceID,
+                    reason: "forced_us_layout_activated"
+                )
+            }
         }
     }
 

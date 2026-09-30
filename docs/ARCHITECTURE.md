@@ -28,6 +28,12 @@ The active browser URL drives website rules, and resolving it costs an Apple Eve
 
 `SmartInputService` answers "is this token a snippet trigger, or a prefix of one?" on every keystroke. It does so against `SnippetIndex`, a pair of lookup tables keyed by lowercased trigger and by lowercased proper prefix, rebuilt only when the snippet configuration changes. Per-application permission is resolved once per frontmost application (and herdr agent-pane state) into a cached set of snippet IDs. Neither path may scan the snippet list or construct a `SnippetApplicationScope` per keystroke. The event tap's watchdog is a backstop only — the ordinary ways a tap dies arrive through the tap callback itself — so it runs every 5 seconds with matching tolerance.
 
+### Event tap lifecycle
+
+The process holds at most one keyboard tap (`keyDown` + `flagsChanged`). `.tapDisabledByTimeout` and `.tapDisabledByUserInput` re-enable that same tap. It is recreated only when Claude launches (so it sits in front of Claude's Option listener; coalesced, at most once per 10 s) or when its Mach port dies, and teardown always disables the tap, removes and invalidates its run-loop source, and invalidates the Mach port before a new one is created. Removing only the run-loop source leaves an enabled tap nobody services in WindowServer's chain; on 2026-09-30 about 80 of those accumulated and every keystroke waited on them until the keyboard stopped working.
+
+The watchdog runs on its own dispatch queue, not the tap thread. It re-enables a silently disabled tap, takes the tap out of the chain while a callback has been running for more than 1.5 s (and restores it once the callback returns), and counts the taps WindowServer holds for the process through `CGGetEventTapList`, logging `event_tap_count_anomaly` if that is not exactly one. The callback never calls Text Input Sources APIs: layout switches it asks for run on a serial `inputSourceQueue`.
+
 `SmartInputLearningStore` holds roughly a megabyte of learned words once it reaches its 2,000-word limit, and every save rewrites all of it. Writes are debounced 30 seconds, encoded compactly without sorted keys, and performed off the lock so the event tap is never blocked behind a serialization. `AppDelegate` forces a synchronous flush on termination and before sleep.
 
 ## herdr panes

@@ -93,3 +93,21 @@ holding Fn did nothing. ChatGPT hold-to-dictate is now configured as
 native shortcut. LayoutPilot retains short Fn layout switching and does not
 launch Vibe Read or synthesize dictation keys. The live Control recording path
 needs verification after ChatGPT restarts.
+
+## Event tap health
+
+Count the taps LayoutPilot holds (should be exactly 1, enabled):
+
+```swift
+// swiftc count_taps.swift && ./count_taps
+import CoreGraphics
+var n: UInt32 = 0; CGGetEventTapList(0, nil, &n)
+var taps = [CGEventTapInformation](repeating: .init(), count: Int(n)); CGGetEventTapList(n, &taps, &n)
+let pid = pid_t(CommandLine.arguments[1])!
+print(taps.prefix(Int(n)).filter { $0.tappingProcess == pid }.map { ($0.eventTapID, $0.enabled, $0.avgUsecLatency) })
+```
+
+Force the recreate path (coalesced, at most once per 10 s) by posting the distributed
+notification `com.velizard.LayoutPilot.reassertEventTap`. The key trace records
+`event_tap_reassert`, `event_tap_torn_down`, `event_tap_started`, and any
+`event_tap_count_anomaly` or `event_tap_callback_stuck_disabled` from the watchdog.
