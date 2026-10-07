@@ -3481,7 +3481,10 @@ public final class SmartInputService: @unchecked Sendable {
                 targetLayoutID: russianLayoutID,
                 targetLanguage: .russian
             )
-            return hasExplicitDeferredSuppression(candidate) ? nil : candidate
+            // A standalone-token undo is checked by checkBilingualConversion.
+            // Keep the deferred candidate: the following word supplies new
+            // evidence, and that phrase has its own bilingual_context undo key.
+            return candidate
         }
 
         if isRussian {
@@ -3502,21 +3505,10 @@ public final class SmartInputService: @unchecked Sendable {
                 targetLayoutID: englishLayoutID,
                 targetLanguage: .english
             )
-            return hasExplicitDeferredSuppression(candidate) ? nil : candidate
+            return candidate
         }
 
         return nil
-    }
-
-    private func hasExplicitDeferredSuppression(_ candidate: DeferredShortTokenConversion) -> Bool {
-        learningStore.suppressionReason(
-            mode: "bilingual",
-            original: candidate.original,
-            replacement: candidate.replacement,
-            sourceLayoutID: candidate.sourceLayoutID,
-            targetLayoutID: candidate.targetLayoutID,
-            bundleID: learningLookupBundleID(for: candidate.bundleID)
-        ) == "user_rejected_conversion"
     }
 
     private func learningLookupBundleID(for bundleID: String?) -> String? {

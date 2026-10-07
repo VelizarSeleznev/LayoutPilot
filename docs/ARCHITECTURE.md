@@ -36,6 +36,22 @@ The watchdog runs on its own dispatch queue, not the tap thread. It re-enables a
 
 `SmartInputLearningStore` holds roughly a megabyte of learned words once it reaches its 2,000-word limit, and every save rewrites all of it. Writes are debounced 30 seconds, encoded compactly without sorted keys, and performed off the lock so the event tap is never blocked behind a serialization. `AppDelegate` forces a synchronous flush on termination and before sleep.
 
+## Short-word recovery and learned undo
+
+Smart RU/EN keeps a plausible one-to-three-character token across a whitespace
+boundary until the following word confirms its intended language. At the next
+word boundary, it can replace the pair together (`e vtyz` → `у меня`).
+
+Undo history is scoped to the decision: a rejected standalone `bilingual`
+conversion still suppresses that token's standalone conversion, but does not
+discard the deferred candidate. The later phrase supplies new evidence and
+uses its own `bilingual_context` suppression key. Repeatedly undoing the phrase
+still suppresses that phrase. This fixes the October 7 report, where two August
+18 undos of `e` → `у` globally prevented recovery even when `vtyz` became `меня`.
+`ContextualShortWordTests` reproduces that learned state without changing the
+user's learning store and checks lowercase, uppercase, unchanged Russian
+following words, English following words, and phrase undo suppression.
+
 ## herdr panes
 
 [herdr](https://herdr.dev) multiplexes shells and coding agents inside one terminal window, so the frontmost application alone says nothing about what receives keys. `HerdrPaneMonitor` fills that gap:
@@ -60,4 +76,3 @@ The project is intentionally structured so later work can add:
 - launch-at-login integration
 - richer diagnostics and logging
 - local LLM calls for assisted rule creation or classification
-

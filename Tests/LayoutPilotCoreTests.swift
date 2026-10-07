@@ -1599,7 +1599,11 @@ final class LayoutPilotCoreTests: XCTestCase {
     }
 
     func testBilingualConversionCorrectsDoubleInitialUppercaseAfterTranslation() {
-        let service = SmartInputService.shared
+        // Personal undo history must not change a capitalization regression.
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let service = SmartInputService(learningStore: SmartInputLearningStore(fileURL: storeURL))
 
         let result = service.checkBilingualConversion(
             for: "XNj",

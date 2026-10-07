@@ -3,6 +3,63 @@ import XCTest
 
 @MainActor
 final class ContextualShortWordTests: XCTestCase {
+    func testRejectedStandaloneLetterStillUsesFollowingWordContext() throws {
+        let storeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("smart-input-learning.json")
+        let store = SmartInputLearningStore(fileURL: storeURL)
+        let service = SmartInputService(learningStore: store)
+
+        // A past undo of a letter alone must not veto a later confirmed phrase.
+        for _ in 0..<2 {
+            store.recordRejectedConversion(
+                mode: "bilingual",
+                original: "e",
+                replacement: "у",
+                sourceLayoutID: "com.apple.keylayout.US",
+                targetLayoutID: "com.apple.keylayout.RussianWin",
+                bundleID: "company.thebrowser.Browser"
+            )
+        }
+
+        XCTAssertNil(service.checkBilingualConversion(
+            for: "e",
+            sourceLayoutID: "com.apple.keylayout.US",
+            contextWords: ["привет", "как"]
+        ))
+
+        for preceding in ["e", "E"] {
+            let conversion = service.contextualPhraseConversion(
+                precedingToken: preceding,
+                separator: " ",
+                precedingSourceLayoutID: "com.apple.keylayout.US",
+                followingOriginal: "vtyz",
+                followingReplacement: "меня",
+                followingTargetLayoutID: "com.apple.keylayout.RussianWin"
+            )
+            XCTAssertEqual(conversion?.original, preceding + " vtyz")
+            XCTAssertEqual(conversion?.replacement, preceding == "E" ? "У меня" : "у меня")
+        }
+
+        XCTAssertEqual(service.contextualPhraseConversion(
+            precedingToken: "e",
+            separator: " ",
+            precedingSourceLayoutID: "com.apple.keylayout.US",
+            followingOriginal: "меня",
+            followingReplacement: "меня",
+            followingTargetLayoutID: nil
+        )?.replacement, "у меня")
+
+        XCTAssertNil(service.contextualPhraseConversion(
+            precedingToken: "e",
+            separator: " ",
+            precedingSourceLayoutID: "com.apple.keylayout.US",
+            followingOriginal: "mail",
+            followingReplacement: "mail",
+            followingTargetLayoutID: nil
+        ))
+    }
+
     func testSingleLetterIsRecoveredWhenFollowingWordConfirmsRussianLayout() throws {
         let storeURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
