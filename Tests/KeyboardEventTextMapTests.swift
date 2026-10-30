@@ -4,7 +4,8 @@ import XCTest
 
 final class KeyboardEventTextMapTests: XCTestCase {
     func testSplitFollowedByRussianWordWithStaleRussianEventText() throws {
-        let us = try XCTUnwrap(KeyboardEventTextMap.load(sourceID: "com.apple.keylayout.US"))
+        let us = try XCTUnwrap(KeyboardEventTextMap.load(sourceID: "com.apple.keylayout.US")
+            ?? KeyboardEventTextMap.load(sourceID: "com.apple.keylayout.ABC"))
         // Actual keys for сделать, after ыздше -> split switched the active layout to US.
         let keys: [Int64] = [8, 37, 17, 40, 3, 45, 46]
         let token = zip(keys, "сделать").map {

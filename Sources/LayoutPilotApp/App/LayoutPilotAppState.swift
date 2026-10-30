@@ -48,11 +48,6 @@ final class LayoutPilotAppState {
             Task { @MainActor in RewriteService.shared.run() }
         }
 
-        SmartInputService.shared.onInstantGlobeSwitch = { source in
-            Task { @MainActor in
-                GlobeSwitchIndicator.shared.show(source: source)
-            }
-        }
         // Global dictation is owned by the user-selected app, not LayoutPilot.
 
         // Suggestions panel callbacks
