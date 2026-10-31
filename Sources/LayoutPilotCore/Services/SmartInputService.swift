@@ -61,6 +61,19 @@ public final class SmartInputService: @unchecked Sendable {
             return terminalPane.paneID
         }
     }
+
+    /// Ghostty consumes Cmd-V as a text paste before omp can inspect an image.
+    /// Restrict the translation to an active omp pane and an image-only clipboard.
+    static func shouldRouteImagePasteToOmp(
+        keyCode: Int64, flags: CGEventFlags, context: InputContextSnapshot,
+        containsImage: Bool, containsText: Bool
+    ) -> Bool {
+        let blocked: CGEventFlags = [.maskShift, .maskAlternate, .maskControl]
+        return keyCode == 9 && flags.contains(.maskCommand) && flags.intersection(blocked).isEmpty
+            && context.bundleID == "com.mitchellh.ghostty"
+            && context.agentPaneID != nil && context.terminalPane?.agent == "omp"
+            && containsImage && !containsText
+    }
     
     private let excludedBundleIDs = TextSnippetPolicy.securityExcludedBundleIDs
     
@@ -1375,6 +1388,25 @@ public final class SmartInputService: @unchecked Sendable {
         let flags = event.flags
         let inputContext = inputContextSnapshot()
         let activeBundleID = inputContext.bundleID
+
+        if keyCode == 9, flags.contains(.maskCommand), inputContext.agentPaneID != nil,
+           inputContext.terminalPane?.agent == "omp", activeBundleID == "com.mitchellh.ghostty" {
+            let pasteboard = NSPasteboard.general
+            let image = pasteboard.availableType(from: [.png, .tiff]) != nil
+            let text = pasteboard.availableType(from: [.string]) != nil
+            if Self.shouldRouteImagePasteToOmp(
+                keyCode: keyCode, flags: flags, context: inputContext,
+                containsImage: image, containsText: text
+            ) {
+                event.flags.remove(.maskCommand)
+                event.flags.insert(.maskControl)
+                var controlV: [UniChar] = [0x16]
+                event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &controlV)
+                traceDecision = "route_omp_clipboard_image"
+                traceDisposition = "modified"
+                return Unmanaged.passUnretained(event)
+            }
+        }
 
         if shouldForceUSForSpotlight(keyCode: keyCode, flags: flags) {
             traceDecision = "force_us_for_spotlight"

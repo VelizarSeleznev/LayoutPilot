@@ -2,6 +2,27 @@ import CoreGraphics
 @testable import LayoutPilotCore
 import XCTest
 
+final class HerdrImagePasteTests: XCTestCase {
+    func testRoutesOnlyImageOnlyCommandVInGhosttyOmpPane() {
+        let pane = TerminalPaneFocus(hostBundleID: "com.mitchellh.ghostty", paneID: "w1:p1", agent: "omp")
+        let context = SmartInputService.InputContextSnapshot(bundleID: "com.mitchellh.ghostty", terminalPane: pane)
+        func routes(_ context: SmartInputService.InputContextSnapshot, key: Int64 = 9,
+                    flags: CGEventFlags = .maskCommand, image: Bool = true, text: Bool = false) -> Bool {
+            SmartInputService.shouldRouteImagePasteToOmp(keyCode: key, flags: flags, context: context,
+                                                        containsImage: image, containsText: text)
+        }
+        XCTAssertTrue(routes(context))
+        XCTAssertFalse(routes(context, image: false))
+        XCTAssertFalse(routes(context, text: true))
+        XCTAssertFalse(routes(context, flags: [.maskCommand, .maskShift]))
+        XCTAssertFalse(routes(context, key: 8))
+        XCTAssertFalse(routes(.init(bundleID: "com.mitchellh.ghostty")))
+        XCTAssertFalse(routes(.init(bundleID: "com.apple.Terminal", terminalPane: pane)))
+        let other = TerminalPaneFocus(hostBundleID: "com.mitchellh.ghostty", paneID: "w1:p1", agent: "claude")
+        XCTAssertFalse(routes(.init(bundleID: "com.mitchellh.ghostty", terminalPane: other)))
+    }
+}
+
 final class AgentPromptTrackerTests: XCTestCase {
     private let us: Set<String> = ["com.apple.keylayout.US", "com.apple.keylayout.ABC"]
     private let russian = "com.apple.keylayout.RussianWin"
