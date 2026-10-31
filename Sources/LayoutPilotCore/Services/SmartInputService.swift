@@ -1398,13 +1398,10 @@ public final class SmartInputService: @unchecked Sendable {
                 keyCode: keyCode, flags: flags, context: inputContext,
                 containsImage: image, containsText: text
             ) {
-                event.flags.remove(.maskCommand)
-                event.flags.insert(.maskControl)
-                var controlV: [UniChar] = [0x16]
-                event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &controlV)
                 traceDecision = "route_omp_clipboard_image"
-                traceDisposition = "modified"
-                return Unmanaged.passUnretained(event)
+                traceDisposition = "consumed"
+                routeImagePasteToOmp(context: inputContext)
+                return nil
             }
         }
 
@@ -2368,6 +2365,37 @@ public final class SmartInputService: @unchecked Sendable {
                 self.updateCachedInputSourceID(sourceID, reason: "agent_command_layout_restored")
             } catch {
                 self.logger.error("Could not restore the layout after an agent command: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Ghostty derives Ctrl-V from the active input source, not just the event's
+    /// Unicode string. Temporarily select an English layout, then restore it.
+    private func routeImagePasteToOmp(context: InputContextSnapshot) {
+        guard let pid = context.processIdentifier else { return }
+        inputSourceQueue.async { [weak self] in
+            guard let self, self.inputContextSnapshot().agentPaneID == context.agentPaneID,
+                  self.inputContextSnapshot().processIdentifier == pid else { return }
+            let client = SystemInputSourceClient()
+            let previous = client.currentInputSourceID()
+            Self.activatePreferredUSInputSource(using: client)
+            guard let selected = client.currentInputSourceID(), self.usInputSources.contains(selected) else { return }
+            let source = CGEventSource(stateID: .hidSystemState)
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else { return }
+            down.flags = .maskControl
+            up.flags = .maskControl
+            down.setIntegerValueField(.eventSourceUserData, value: self.magicEventTag)
+            up.setIntegerValueField(.eventSourceUserData, value: self.magicEventTag)
+            down.postToPid(pid)
+            up.postToPid(pid)
+            if let previous, previous != selected {
+                self.inputSourceQueue.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    guard let self, client.currentInputSourceID() == selected else { return }
+                    if (try? client.activateInputSource(withID: previous)) != nil {
+                        self.updateCachedInputSourceID(previous, reason: "omp_image_paste_layout_restored")
+                    }
+                }
             }
         }
     }
